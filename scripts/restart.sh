@@ -4,5 +4,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-docker compose restart app
-docker compose ps
+
+CONTAINER_CMD="${CONTAINER_CMD:-docker}"
+$CONTAINER_CMD compose restart app
+$CONTAINER_CMD compose ps

@@ -1,8 +1,21 @@
 .PHONY: help build up down restart logs sh test lint package-offline
 
+# 容器运行时命令。默认 docker,可在调用时覆盖:
+#   make up                            # 用 docker
+#   make up CONTAINER_CMD=nerdctl      # 用 nerdctl(containerd)
+# 也可通过环境变量 export CONTAINER_CMD=nerdctl 持久化。
+CONTAINER_CMD ?= docker
+export CONTAINER_CMD
+
+# 构建时的基础镜像。空则用 Dockerfile 默认值 (python:3.12-slim)。
+# 国内加速例:
+#   make build PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
+PYTHON_IMAGE ?=
+BUILD_ARGS = $(if $(PYTHON_IMAGE),--build-arg PYTHON_IMAGE=$(PYTHON_IMAGE))
+
 help:
-	@echo "Available targets:"
-	@echo "  build            Build the Docker image"
+	@echo "Available targets (CONTAINER_CMD=$(CONTAINER_CMD), PYTHON_IMAGE=$(PYTHON_IMAGE)):"
+	@echo "  build            Build the container image"
 	@echo "  up               Start the stack (detached)"
 	@echo "  down             Stop and remove containers"
 	@echo "  restart          Restart the app container (picks up code-mount changes)"
@@ -11,9 +24,12 @@ help:
 	@echo "  test             Run the test suite inside the container"
 	@echo "  lint             Run ruff/mypy"
 	@echo "  package-offline  Build an offline deployment bundle"
+	@echo ""
+	@echo "Override runtime: make <target> CONTAINER_CMD=nerdctl"
+	@echo "Override base image: make build PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim"
 
 build:
-	docker compose build
+	$(CONTAINER_CMD) compose build $(BUILD_ARGS)
 
 up:
 	bash scripts/start.sh
@@ -25,17 +41,17 @@ restart:
 	bash scripts/restart.sh
 
 logs:
-	docker compose logs -f app
+	$(CONTAINER_CMD) compose logs -f app
 
 sh:
-	docker compose exec app /bin/bash
+	$(CONTAINER_CMD) compose exec app /bin/bash
 
 test:
-	docker compose exec app pytest
+	$(CONTAINER_CMD) compose exec app pytest
 
 lint:
-	docker compose exec app ruff check .
-	docker compose exec app mypy app
+	$(CONTAINER_CMD) compose exec app ruff check .
+	$(CONTAINER_CMD) compose exec app mypy app
 
 package-offline:
 	bash scripts/package_offline.sh

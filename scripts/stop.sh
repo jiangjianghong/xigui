@@ -3,4 +3,6 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-docker compose down
+
+CONTAINER_CMD="${CONTAINER_CMD:-docker}"
+$CONTAINER_CMD compose down

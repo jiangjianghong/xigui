@@ -1,4 +1,10 @@
-FROM python:3.12-slim
+# 基础镜像可通过 --build-arg PYTHON_IMAGE=<其他源> 切换,方便国内拉取加速。
+# 常用国内源(任选其一):
+#   docker.m.daocloud.io/library/python:3.12-slim
+#   registry.cn-hangzhou.aliyuncs.com/library/python:3.12-slim
+#   ccr.ccs.tencentyun.com/library/python:3.12-slim
+ARG PYTHON_IMAGE=python:3.12-slim
+FROM ${PYTHON_IMAGE}
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
