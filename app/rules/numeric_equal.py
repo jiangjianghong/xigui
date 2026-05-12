@@ -16,7 +16,7 @@ from app.utils.normalize import extract_number
 class NumericEqualRule(Rule):
     rule_type = "numeric_equal"
 
-    def compare(self, a_value: str, b_value: str) -> CompareResult:
+    def compare(self, a_value: str, b_value: str, **_: object) -> CompareResult:
         tolerance = float(self.params.get("tolerance", 0.0))
         unit_map = self.params.get("unit_map") or {}
 

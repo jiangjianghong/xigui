@@ -43,5 +43,16 @@ class Rule(ABC):
         self.params: dict[str, Any] = cfg.get("params", {}) or {}
 
     @abstractmethod
-    def compare(self, a_value: str, b_value: str) -> CompareResult:
-        """对两个字段值做比较，返回 ``CompareResult``。"""
+    def compare(
+        self,
+        a_value: str,
+        b_value: str,
+        *,
+        a_name: str | None = None,
+        b_name: str | None = None,
+    ) -> CompareResult:
+        """对两个字段值做比较，返回 ``CompareResult``。
+
+        ``a_name`` / ``b_name`` 是上游请求传入的字段名（可选）。确定性规则
+        通常用不到，可用 ``**_`` 吃掉；语义类规则需要把它们注入 prompt。
+        """

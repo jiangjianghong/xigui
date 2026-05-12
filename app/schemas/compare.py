@@ -6,9 +6,17 @@ from pydantic import BaseModel, Field
 
 
 class FieldInput(BaseModel):
-    """单个字段的输入：名称 + 值。"""
+    """单个字段的输入：名称（可选）+ 值。
 
-    name: str = Field(..., description="字段名称，例如 '项目代码'、'总投资金额'")
+    ``name`` 默认是可选的，简化业务侧调用。是否强制要求由具体规则的
+    ``require_field_name`` 决定（也可由 prompt_template 引用 ``{a_name}`` /
+    ``{b_name}`` 自动推导），统一在 ``/compare`` 入口校验，缺则返回 422。
+    """
+
+    name: str | None = Field(
+        default=None,
+        description="字段名称，例如 '项目代码'、'总投资金额'。是否必填由规则配置决定。",
+    )
     value: str = Field(..., description="字段的文本值，可以包含单位/日期/中文/空白")
 
 

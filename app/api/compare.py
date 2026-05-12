@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.core.config import get_rules
 from app.core.llm_client import LLMTimeout, LLMUpstreamError
-from app.rules.registry import UnknownRuleType, build_rule
+from app.rules.registry import UnknownRuleType, build_rule, should_require_field_name
 from app.schemas.compare import CompareRequest, CompareResponse, Cost
 
 router = APIRouter(tags=["compare"])
@@ -50,6 +50,21 @@ def compare(req: CompareRequest) -> CompareResponse:
             detail=f"rule_id 不存在: {req.rule_id}",
         )
 
+    # 规则级别的 name 必填校验:yaml 显式 require_field_name=true,或
+    # prompt_template 引用了 {a_name}/{b_name} 自动 imply。
+    if should_require_field_name(rule_cfg):
+        missing = []
+        if not (req.field_a.name or "").strip():
+            missing.append("field_a.name")
+        if not (req.field_b.name or "").strip():
+            missing.append("field_b.name")
+        if missing:
+            log.warning("rule %s 要求 name 必填,缺失: %s", req.rule_id, missing)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"rule {req.rule_id} 要求 {', '.join(missing)} 必填",
+            )
+
     try:
         rule = build_rule(rule_cfg)
     except UnknownRuleType as e:
@@ -61,7 +76,12 @@ def compare(req: CompareRequest) -> CompareResponse:
         ) from e
 
     try:
-        res = rule.compare(req.field_a.value, req.field_b.value)
+        res = rule.compare(
+            req.field_a.value,
+            req.field_b.value,
+            a_name=req.field_a.name,
+            b_name=req.field_b.name,
+        )
     except LLMTimeout as e:
         log.error("LLM 调用超时 rule_id=%s: %s", req.rule_id, e)
         raise HTTPException(

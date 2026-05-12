@@ -17,7 +17,7 @@ from app.utils.normalize import normalize_text
 class ExactMatchRule(Rule):
     rule_type = "exact_match"
 
-    def compare(self, a_value: str, b_value: str) -> CompareResult:
+    def compare(self, a_value: str, b_value: str, **_: object) -> CompareResult:
         opts = {
             "ignore_whitespace": self.params.get("ignore_whitespace", True),
             "ignore_case": self.params.get("ignore_case", True),

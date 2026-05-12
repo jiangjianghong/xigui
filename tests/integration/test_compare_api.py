@@ -195,3 +195,78 @@ def test_admin_reload_rules():
     body = resp.json()
     assert body["status"] == "ok"
     assert body["rules_loaded"] >= 5
+
+
+# ---------------------------------------------------------------------------
+# require_field_name 校验
+# ---------------------------------------------------------------------------
+
+def test_field_name_optional_for_normal_rule():
+    """R001 既没显式 require_field_name 也不引用 {a_name},name 可省略。"""
+    resp = client.post("/compare", json={
+        "rule_id": "R001",
+        "field_a": {"value": "  2024-001 "},
+        "field_b": {"value": "2024-001"},
+    })
+    assert resp.status_code == 200
+    assert resp.json()["result"] is True
+
+
+def test_require_field_name_explicit_missing_returns_422(monkeypatch):
+    """yaml 显式 require_field_name=true 时,缺 name 必须 422。"""
+    from app.api import compare as compare_module
+
+    fake_rule = {
+        "id": "RTEST",
+        "name": "test",
+        "type": "exact_match",
+        "require_field_name": True,
+        "params": {},
+    }
+    monkeypatch.setattr(compare_module, "get_rules", lambda: [fake_rule])
+
+    resp = client.post("/compare", json={
+        "rule_id": "RTEST",
+        "field_a": {"value": "x"},
+        "field_b": {"value": "x"},
+    })
+    assert resp.status_code == 422
+    detail = resp.json()["detail"]
+    assert "field_a.name" in detail
+    assert "field_b.name" in detail
+
+
+def test_require_field_name_imply_from_template_missing_returns_422(mock_llm):
+    """R004 的 prompt_template 含 {a_name},自动 imply,缺 name 应 422。"""
+    resp = client.post("/compare", json={
+        "rule_id": "R004",
+        "field_a": {"value": "贵州省XX建设有限公司"},
+        "field_b": {"value": "XX建设公司"},
+    })
+    assert resp.status_code == 422
+    assert "field_a.name" in resp.json()["detail"]
+
+
+def test_require_field_name_imply_with_name_passes(mock_llm):
+    """R004 提供了 name,应正常走通,且 prompt 渲染含字段名。"""
+    captured: dict = {}
+
+    def _capture(messages, **kwargs):
+        captured["messages"] = messages
+        return '{"match": true, "reason": "ok"}', {
+            "prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7,
+        }
+
+    # 替换 mock 的实现以捕获 prompt
+    from app.rules import semantic_base as sb
+    sb.chat_json = _capture  # type: ignore[assignment]
+
+    resp = client.post("/compare", json={
+        "rule_id": "R004",
+        "field_a": {"name": "建设单位", "value": "贵州省XX建设有限公司"},
+        "field_b": {"name": "建设单位", "value": "XX建设公司"},
+    })
+    assert resp.status_code == 200
+    assert resp.json()["result"] is True
+    user_msg = captured["messages"][-1]["content"]
+    assert "建设单位" in user_msg  # name 被渲染进 prompt

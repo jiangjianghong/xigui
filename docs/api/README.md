@@ -46,16 +46,18 @@
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `rule_id` | string | 是 | 规则 ID，对应 `config/rules.yaml` 中的 `id` |
-| `field_a` | object | 是 | 字段 A，含 `name`（字段名）和 `value`（文本值） |
+| `field_a` | object | 是 | 字段 A，含 `name`（可选）和 `value`（必填） |
 | `field_b` | object | 是 | 字段 B，结构同上 |
+| `field_x.value` | string | 是 | 字段的文本值 |
+| `field_x.name` | string | **看规则** | 字段名。**默认可省略**；若规则配了 `require_field_name: true` 或 `prompt_template` 引用了 `{a_name}`/`{b_name}`，缺则 422 |
 
-请求示例：
+请求示例(name 可省略,等价于完整写法):
 
 ```json
 {
   "rule_id": "R001",
-  "field_a": {"name": "项目代码", "value": "  2024-001 "},
-  "field_b": {"name": "项目代码", "value": "2024-001"}
+  "field_a": {"value": "  2024-001 "},
+  "field_b": {"value": "2024-001"}
 }
 ```
 
@@ -128,7 +130,8 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
 | 200 | 比对成功（无论 true / false） | `CompareResponse` |
 | 200 | 数值/日期解析失败 | `result: false, reason: "无法解析..."` |
 | 200 | LLM 输出非合法 JSON | `result: false, reason: "LLM 输出非法 JSON"` |
-| 422 | 请求参数 schema 校验失败 | FastAPI 默认 |
+| 422 | 请求参数 schema 校验失败（如 value 缺失） | FastAPI 默认 |
+| 422 | 规则要求 name 必填但缺失 | `{"detail":"rule R00X 要求 field_a.name 必填"}` |
 | 404 | `rule_id` 不存在 | `{"detail":"rule_id 不存在: Rxxx"}` |
 | 500 | rules.yaml 写了未知 type / 其他未捕获异常 | `{"detail":"..."}` |
 | 502 | LLM 上游错误（鉴权/网络） | `{"detail":"LLM 上游错误: ..."}` |

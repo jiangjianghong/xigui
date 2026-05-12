@@ -44,7 +44,14 @@ class SemanticRule(Rule):
     # 子类覆盖：系统级角色定位
     system_prompt: str = ""
 
-    def _render_user_prompt(self, a_value: str, b_value: str) -> str:
+    def _render_user_prompt(
+        self,
+        a_value: str,
+        b_value: str,
+        *,
+        a_name: str | None = None,
+        b_name: str | None = None,
+    ) -> str:
         tpl = self.cfg.get("prompt_template", "")
         if not tpl:
             # yaml 没给 template 时给一个最简兜底
@@ -54,15 +61,31 @@ class SemanticRule(Rule):
                 f"B: {b_value}\n"
                 '严格输出 JSON: {"match": true|false, "reason": "<不超过30字>"}'
             )
-        # 用 .format 渲染，允许 yaml 中写 {a_value} {b_value}
+        # 用 .format 渲染。允许 yaml 中写 {a_value} {b_value} {a_name} {b_name}。
+        # name 缺失时占位空串，避免渲染出 "None"——若规则强依赖 name，应在
+        # API 入口已经做过 422 校验，理论上走不到这里。
         try:
-            return tpl.format(a_value=a_value, b_value=b_value)
+            return tpl.format(
+                a_value=a_value,
+                b_value=b_value,
+                a_name=a_name or "",
+                b_name=b_name or "",
+            )
         except (KeyError, IndexError) as e:
             log.warning("prompt_template 渲染失败 rule_id=%s err=%s", self.id, e)
             return tpl
 
-    def compare(self, a_value: str, b_value: str) -> CompareResult:
-        user_prompt = self._render_user_prompt(a_value, b_value)
+    def compare(
+        self,
+        a_value: str,
+        b_value: str,
+        *,
+        a_name: str | None = None,
+        b_name: str | None = None,
+    ) -> CompareResult:
+        user_prompt = self._render_user_prompt(
+            a_value, b_value, a_name=a_name, b_name=b_name,
+        )
         messages: list[dict[str, Any]] = []
         if self.system_prompt:
             messages.append({"role": "system", "content": self.system_prompt})

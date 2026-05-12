@@ -25,7 +25,7 @@ _OPS = {
 class TimeOrderRule(Rule):
     rule_type = "time_order"
 
-    def compare(self, a_value: str, b_value: str) -> CompareResult:
+    def compare(self, a_value: str, b_value: str, **_: object) -> CompareResult:
         op_name = str(self.params.get("operator", "lt")).lower()
         if op_name not in _OPS:
             return CompareResult(

@@ -6,11 +6,16 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from app.rules.base import Rule
 
 _REGISTRY: dict[str, type[Rule]] = {}
+
+# 用于自动推导 require_field_name:prompt_template 引用了 {a_name} 或 {b_name}
+# 时,该规则就一定要求请求里带上 name(否则只会渲染出空串,LLM 拿不到上下文)。
+_NAME_PLACEHOLDER_RE = re.compile(r"\{[ab]_name\}")
 
 
 def register(cls: type[Rule]) -> type[Rule]:
@@ -43,3 +48,22 @@ def build_rule(cfg: dict[str, Any]) -> Rule:
 def list_registered_types() -> list[str]:
     """便于 /health 接口或调试查看已注册类型。"""
     return sorted(_REGISTRY.keys())
+
+
+def should_require_field_name(rule_cfg: dict[str, Any]) -> bool:
+    """判断该规则是否要求请求里 ``field_a.name`` / ``field_b.name`` 必填。
+
+    判定优先级:
+    1. yaml 显式 ``require_field_name: true`` → True
+    2. ``prompt_template`` 引用了 ``{a_name}`` 或 ``{b_name}`` → 自动推导 True
+       (避免业务忘记设 yaml 但 prompt 又依赖 name,运行时拿到空串)
+    3. yaml 显式 ``require_field_name: false`` → False
+    4. 都没说 → False(默认放宽,简化业务调用)
+    """
+    explicit = rule_cfg.get("require_field_name")
+    if explicit is True:
+        return True
+    if explicit is False:
+        return False
+    tpl = rule_cfg.get("prompt_template") or ""
+    return bool(_NAME_PLACEHOLDER_RE.search(tpl))
