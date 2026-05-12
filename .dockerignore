@@ -1,0 +1,23 @@
+# Exclude things that shouldn't enter the build context.
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.coverage
+htmlcov
+
+logs/*
+data/*
+docker/offline/*.tar
+docker/offline/wheels/
+
+.env
+.idea
+.vscode
+.DS_Store

@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Project runtime artifacts
+.env
+logs/*
+!logs/.gitkeep
+data/*
+!data/.gitkeep
+
+# Offline package bundles
+docker/offline/*.tar
+docker/offline/wheels/
+
+# OS
+.DS_Store
+Thumbs.db
