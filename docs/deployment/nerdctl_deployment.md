@@ -23,19 +23,21 @@ nerdctl 是 containerd 官方 CLI,在常用子命令上与 docker 高度兼容,
 
 ## 二、用本项目的 Makefile
 
-Makefile 内置两个变量,共同控制构建/运行行为:
+Makefile 内置三个变量,共同控制构建/运行行为:
 
 | 变量 | 默认 | 作用 |
 | --- | --- | --- |
 | `CONTAINER_CMD` | `docker` | 容器运行时,改成 `nerdctl` 即整套命令切到 nerdctl |
 | `PYTHON_IMAGE` | (空,走 Dockerfile 默认 `python:3.12-slim`) | 基础镜像,国内可换 daocloud/阿里云镜像加速 |
+| `APT_MIRROR` | (空,走 `deb.debian.org`) | 镜像内的 apt 源,国内**强烈建议**换成 `mirrors.aliyun.com` 等,否则 `apt-get update` 经常卡 20+ 分钟 |
 
-**最常用的一条龙写法**(nerdctl + 国内基础镜像源):
+**最常用的一条龙写法**(nerdctl + 国内基础镜像源 + 国内 apt 源):
 
 ```bash
 make build \
   CONTAINER_CMD=nerdctl \
-  PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
+  PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim \
+  APT_MIRROR=mirrors.aliyun.com
 
 make up  CONTAINER_CMD=nerdctl
 make logs CONTAINER_CMD=nerdctl
@@ -46,6 +48,7 @@ make logs CONTAINER_CMD=nerdctl
 ```bash
 export CONTAINER_CMD=nerdctl
 export PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
+export APT_MIRROR=mirrors.aliyun.com
 
 make build
 make up
@@ -57,13 +60,17 @@ make restart
 `make help` 会显示当前生效的变量值,方便确认:
 
 ```bash
-$ make help CONTAINER_CMD=nerdctl PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
-Available targets (CONTAINER_CMD=nerdctl, PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim):
+$ make help CONTAINER_CMD=nerdctl PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim APT_MIRROR=mirrors.aliyun.com
+Available targets (CONTAINER_CMD=nerdctl, PYTHON_IMAGE=..., APT_MIRROR=mirrors.aliyun.com):
   ...
 ```
 
 scripts/ 下的 `start.sh` / `stop.sh` / `restart.sh` / `package_offline.sh`
-也都读这两个环境变量,行为一致。
+也都读 `CONTAINER_CMD`,行为一致。
+
+> ⚠️ **构建 vs 启动**:`make build` 调用 `compose build`,接收 `PYTHON_IMAGE`/`APT_MIRROR` 等 build-arg;
+> `make up` 调用 `compose up -d`,**不会**重复构建,只用现成镜像启动。
+> nerdctl 的 `compose up` 不认 `--build-arg`,所以必须先 `make build` 再 `make up`(docker 也用同样流程,行为一致)。
 
 ## 三、首次部署(目标服务器有网)
 
@@ -193,11 +200,13 @@ cp .env.example .env
 ### 3.5 构建并启动
 
 ```bash
-# 一条龙写法(最推荐,国内 + nerdctl):
-make build up \
+# 一条龙写法(最推荐,国内 + nerdctl,apt 源也换国内,否则容易卡 20 分钟):
+make build \
   CONTAINER_CMD=nerdctl \
-  PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
+  PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim \
+  APT_MIRROR=mirrors.aliyun.com
 
+make up   CONTAINER_CMD=nerdctl
 make logs CONTAINER_CMD=nerdctl
 ```
 
@@ -206,12 +215,13 @@ make logs CONTAINER_CMD=nerdctl
 ```bash
 export CONTAINER_CMD=nerdctl
 export PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
+export APT_MIRROR=mirrors.aliyun.com
 make build
 make up
 make logs
 ```
 
-若目标机能直连 Docker Hub,`PYTHON_IMAGE` 可以省略,走 Dockerfile 默认值。
+若目标机能直连 Docker Hub,`PYTHON_IMAGE` 可以省略;若不在国内或 deb.debian.org 可达,`APT_MIRROR` 也可省。
 
 ### 3.6 验证
 
@@ -260,6 +270,45 @@ nerdctl compose build --build-arg PYTHON_IMAGE=docker.m.daocloud.io/library/pyth
 
 > 你也可以用公司内部 Harbor 仓库:`harbor.company.com/base/python:3.12-slim`。
 
+## 四点五、镜像内 apt 源国内加速
+
+`python:3.12-slim` 是 Debian 基础镜像,默认 apt 源是 `deb.debian.org`,
+国内访问**经常卡 20+ 分钟**(实测案例:`apt-get install build-essential curl` 跑了 1388 秒)。
+Dockerfile 已把 apt 源参数化:
+
+```dockerfile
+ARG APT_MIRROR=""
+RUN if [ -n "$APT_MIRROR" ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" \
+            /etc/apt/sources.list /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+    fi \
+    && apt-get update && apt-get install ...
+```
+
+用法:
+
+```bash
+make build APT_MIRROR=mirrors.aliyun.com
+make build APT_MIRROR=mirrors.aliyun.com CONTAINER_CMD=nerdctl
+
+# 也可与 PYTHON_IMAGE 叠加(实际部署强烈建议两者一起)
+make build \
+  PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim \
+  APT_MIRROR=mirrors.aliyun.com \
+  CONTAINER_CMD=nerdctl
+```
+
+常用国内 apt 源(只写域名,前缀 `http://` 由 sed 替换时保留):
+
+| 源 | 值 |
+| --- | --- |
+| 阿里云(推荐) | `mirrors.aliyun.com` |
+| 清华 TUNA | `mirrors.tuna.tsinghua.edu.cn` |
+| 中科大 USTC | `mirrors.ustc.edu.cn` |
+| 网易 | `mirrors.163.com` |
+
+换源后 `apt-get update + install` 通常 30 秒内完成。
+
 ## 五、日常运维
 
 ```bash
@@ -274,6 +323,21 @@ nerdctl images       # 查看本地镜像
 ```
 
 ## 六、典型问题
+
+### 6.0 `unsupported restart policy "unless-stopped"`
+
+部分 nerdctl 版本只识别 `always`,不识别 docker-compose 标准的 `unless-stopped`。
+本项目 `docker-compose.yml` 的 `restart:` 字段已经统一改成 `always`(两者在
+本服务场景下行为等价:容器异常退出/宿主重启都会自动拉起)。
+
+如果你看到的是其它 compose 文件报这个错,直接把 `unless-stopped` → `always` 即可。
+
+### 6.0.1 `unknown flag: --build-arg`(出现在 `make up` 时)
+
+nerdctl 的 `compose up` 不支持 `--build-arg`(只有 `compose build` 支持)。
+本项目 `scripts/start.sh` 已分离职责:`make build` 走 `compose build`(吃 build-arg),
+`make up` 走 `compose up -d`(不重复构建)。
+若你的 start.sh 还是旧版含 `--build --build-arg ...`,请同步新版。
 
 ### 6.1 `nerdctl compose` 找不到命令
 

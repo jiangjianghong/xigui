@@ -5,7 +5,7 @@ services:
       dockerfile: docker/Dockerfile
     image: wanzi_guizhe:latest
     container_name: wanzi_guizhe_app
-    restart: unless-stopped
+    restart: always
     environment:
       PYTHONUNBUFFERED: "1"
       CONFIG_PATH: "/app/config/config.yaml"

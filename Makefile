@@ -11,10 +11,18 @@ export CONTAINER_CMD
 # 国内加速例:
 #   make build PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim
 PYTHON_IMAGE ?=
-BUILD_ARGS = $(if $(PYTHON_IMAGE),--build-arg PYTHON_IMAGE=$(PYTHON_IMAGE))
+
+# 构建时镜像内的 apt 源。空则走 deb.debian.org(国内常超时)。
+# 国内加速例:
+#   make build APT_MIRROR=mirrors.aliyun.com
+#   make build APT_MIRROR=mirrors.tuna.tsinghua.edu.cn
+APT_MIRROR ?=
+
+BUILD_ARGS = $(if $(PYTHON_IMAGE),--build-arg PYTHON_IMAGE=$(PYTHON_IMAGE)) \
+             $(if $(APT_MIRROR),--build-arg APT_MIRROR=$(APT_MIRROR))
 
 help:
-	@echo "Available targets (CONTAINER_CMD=$(CONTAINER_CMD), PYTHON_IMAGE=$(PYTHON_IMAGE)):"
+	@echo "Available targets (CONTAINER_CMD=$(CONTAINER_CMD), PYTHON_IMAGE=$(PYTHON_IMAGE), APT_MIRROR=$(APT_MIRROR)):"
 	@echo "  build            Build the container image"
 	@echo "  up               Start the stack (detached)"
 	@echo "  down             Stop and remove containers"
@@ -27,6 +35,7 @@ help:
 	@echo ""
 	@echo "Override runtime: make <target> CONTAINER_CMD=nerdctl"
 	@echo "Override base image: make build PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim"
+	@echo "Override apt mirror: make build APT_MIRROR=mirrors.aliyun.com"
 
 build:
 	$(CONTAINER_CMD) compose build $(BUILD_ARGS)

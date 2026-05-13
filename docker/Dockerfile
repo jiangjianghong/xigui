@@ -13,7 +13,17 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN apt-get update \
+# apt 源也可以换国内镜像,默认空走 deb.debian.org(国内常超时)。
+# 常用值:
+#   mirrors.aliyun.com   mirrors.tuna.tsinghua.edu.cn   mirrors.ustc.edu.cn
+ARG APT_MIRROR=""
+RUN if [ -n "$APT_MIRROR" ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" \
+            /etc/apt/sources.list 2>/dev/null || true; \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g; s|security.debian.org|${APT_MIRROR}|g" \
+            /etc/apt/sources.list.d/debian.sources 2>/dev/null || true; \
+    fi \
+    && apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
         curl \
