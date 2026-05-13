@@ -9,7 +9,7 @@
 期望
 ----
 脚本会发一条"建设单位名称是否一致"的语义判定请求,模拟皖资规约项目里
-`semantic_similar` 规则走 LLM 的真实路径,然后打印:
+LLM 规则走 LLM 的真实路径,然后打印:
 
 - HTTP 是否成功
 - 返回内容(应该是合法 JSON,含 match/reason 字段)
@@ -33,7 +33,7 @@ MODEL = "qwen3.5-27b"
 TIMEOUT = 300
 USE_JSON_MODE = True        # 与项目默认 use_json_mode 对齐
 
-# 模拟 R004 semantic_similar 规则的真实请求
+# 模拟 R004 LLM 规则的真实请求
 SYSTEM_PROMPT = "你是合规审核专家,严格按要求输出 JSON。"
 USER_PROMPT = """判断两个"建设单位名称"是否指向同一主体。
 允许:简称/全称、行政区划前缀差异、有限公司/有限责任公司互换。

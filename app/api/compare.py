@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from app.core.config import get_rules
 from app.core.llm_client import LLMTimeout, LLMUpstreamError
-from app.rules.registry import UnknownRuleType, build_rule, should_require_field_name
+from app.rules.registry import build_rule, should_require_field_name
 from app.schemas.compare import CompareRequest, CompareResponse, Cost
 
 router = APIRouter(tags=["compare"])
@@ -67,8 +67,8 @@ def compare(req: CompareRequest) -> CompareResponse:
 
     try:
         rule = build_rule(rule_cfg)
-    except UnknownRuleType as e:
-        # 规则配置写错了未知 type，运维问题，返 500 让人去查 yaml
+    except ValueError as e:
+        # 规则配置写错了(缺 id 等),运维问题,返 500 让人去查 yaml
         log.error("rules.yaml 配置错误: %s", e)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -106,7 +106,7 @@ def compare(req: CompareRequest) -> CompareResponse:
         "比对完成 rule_id=%s match=%s ms=%d usage=%s reason=%r",
         req.rule_id, res.match, elapsed_ms, res.usage, res.reason[:200],
     )
-    # extra 字段可能含敏感原文/normalized 文本，仅 debug 级别打印
+    # extra 字段可能含 LLM 原始返回片段，仅 debug 级别打印
     log.debug("extra rule_id=%s extra=%s", req.rule_id, res.extra)
 
     return CompareResponse(

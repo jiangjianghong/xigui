@@ -1,103 +1,121 @@
 # 规则活配置
 #
-# 字段说明：
-#   id                     规则唯一标识（上游传入的 rule_id）
-#   name                   规则名称（仅用于日志/文档）
-#   type                   规则类型，决定走哪个实现类。已支持：
-#                            exact_match       严格相等（带归一化）
-#                            numeric_equal     数值相等（带单位换算）
-#                            time_order        时间先后比较
-#                            semantic_similar  语义"基本一致"（调 LLM）
-#                            semantic_exact    语义"严格一致"（调 LLM）
-#   description            规则描述（仅用于日志/文档）
-#   expected_field_names   预期的两个字段名（仅文档化，不做强校验）
-#   require_field_name     可选 bool。是否要求请求里 field_a.name / field_b.name 必填。
-#                          - 显式 true:  缺 name 直接返 422
-#                          - 显式 false: 不校验
-#                          - 未配置:     若 prompt_template 引用了 {a_name} 或 {b_name}
-#                                        则自动 imply true，否则 false
-#   params                 规则参数，每种 type 含义不同（见下方示例注释）
-#   prompt_template        Prompt 模板（仅 semantic_* 用），支持占位符：
-#                            {a_value} {b_value}   字段值（必有）
-#                            {a_name}  {b_name}    字段名（用了会触发 require_field_name）
+# 字段说明:
+#   id                     规则唯一标识(上游传入的 rule_id)
+#   name                   规则名称(仅用于日志/文档)
+#   description            规则描述(仅用于日志/文档)
+#   expected_field_names   预期的两个字段名(仅文档化,不做强校验)
+#   require_field_name     bool。是否要求请求里 field_a.name / field_b.name 必填。
+#                          - true:  缺 name 直接返 422
+#                          - false: 不校验
+#                          (建议每条规则都显式写出来,不依赖默认值)
+#   system_prompt          可选。LLM 的系统提示。不写就用默认的"合规审核专家"角色。
+#   prompt_template        Prompt 模板。所有规则的判定标准都由这里描述。
+#                          支持占位符:
+#                            {a_value} {b_value}   字段值(必有)
+#                            {a_name}  {b_name}    字段名(用了会触发 require_field_name)
+#                          注意:JSON 示例里的大括号要写成双重 {{ }},否则 .format 会报错。
 #
-# 修改本文件后：
-#   - 自动：下一次请求时基于 mtime 自动 reload
-#   - 手动：curl -X POST http://localhost:6549/admin/reload-rules
+# 设计原则:本服务所有规则都走 LLM,不再有"确定性 vs 语义"之分。所有边界条件
+# (容差、容忍空白、单位换算、日期格式等)都在 prompt_template 里用自然语言描述。
+#
+# 修改本文件后:
+#   - 自动: 下一次请求时基于 mtime 自动 reload
+#   - 手动: curl -X POST http://localhost:6549/admin/reload-rules
 
 rules:
-  # --- R001: 严格相等（容忍空白/全半角/大小写） ---
+  # --- R001: 项目代码一致性 ---
   - id: "R001"
     name: "项目代码完全一致"
-    type: "exact_match"
-    description: "项目代码必须严格相等（归一化后）"
+    description: "判断两个项目代码是否指向同一项目"
     expected_field_names: ["项目代码", "项目代码"]
-    params:
-      ignore_whitespace: true
-      ignore_case: true
-      full_to_half: true
-
-  # --- R002: 数值相等（带单位换算） ---
-  - id: "R002"
-    name: "总投资金额一致"
-    type: "numeric_equal"
-    description: "数值相等，允许单位差异（亿/万元）"
-    expected_field_names: ["总投资", "总投资金额"]
-    params:
-      tolerance: 0.0
-      # 单位倍率表，key 是文本中可能出现的单位，value 是换算到"元"的倍率
-      unit_map:
-        "亿": 100000000
-        "万元": 10000
-        "万": 10000
-        "元": 1
-
-  # --- R003: 时间先后比较 ---
-  - id: "R003"
-    name: "批复时间早于申报时间"
-    type: "time_order"
-    description: "field_a 的日期必须严格早于 field_b"
-    expected_field_names: ["批复时间", "申报时间"]
-    params:
-      operator: "lt"            # lt|le|gt|ge|eq
-
-  # --- R004: 语义"基本一致"（调 LLM） ---
-  # 演示 {a_name}/{b_name} 占位符:用了它们就自动 imply require_field_name=true,
-  # 上游接口必须传 field_a.name / field_b.name,否则返 422。
-  - id: "R004"
-    name: "建设单位名称基本一致"
-    type: "semantic_similar"
-    description: "容忍简称/全称/前后缀差异;把字段名注入 prompt,让 LLM 知道在判什么"
-    expected_field_names: ["建设单位", "建设单位"]
-    params:
-      strictness: "loose"
+    require_field_name: false
     prompt_template: |
-      请判断字段"{a_name}"与字段"{b_name}"的两个值是否指向同一个法人主体。
-      允许差异：简称与全称、有/无行政区划前缀、"有限公司"与"有限责任公司"互换。
-      不允许：明显是两个不同的单位（如名称中关键字不同）。
+      请判断以下两个"项目代码"字符串是否指向同一项目。
 
-      A ({a_name}): {a_value}
-      B ({b_name}): {b_value}
-
-      严格按 JSON 输出，不要任何额外说明：
-      {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
-
-  # --- R005: 语义"严格一致"（调 LLM） ---
-  # 不引用 {a_name}/{b_name},name 在请求里可省略。
-  - id: "R005"
-    name: "建设内容详情完全一致"
-    type: "semantic_exact"
-    description: "语义严格一致，允许排序/标点/格式差异，但内容项不能增减"
-    expected_field_names: ["建设内容", "建设内容"]
-    params:
-      strictness: "strict"
-    prompt_template: |
-      请判断以下两段"建设内容"是否在所列项目上严格一致。
-      允许差异：项目顺序、标点符号、空白、序号格式。
-      不允许：任一段多出或缺少任何子项目，或子项目数量/规格不同。
+      允许差异:首尾空白、大小写差异、全角/半角符号差异。
+      不允许差异:任何字符、数字、连字符位置的差异。
 
       A: {a_value}
       B: {b_value}
 
-      严格按 JSON 输出，不要任何额外说明：
-      {{"match": true|false, "reason": "<不超过50字的中文理由>"}}
+      严格按 JSON 输出,不要任何额外说明:
+      {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
+
+  # --- R002: 总投资金额一致性 ---
+  - id: "R002"
+    name: "总投资金额一致"
+    description: "判断两个总投资金额是否数值相等(允许单位差异)"
+    expected_field_names: ["总投资", "总投资金额"]
+    require_field_name: false
+    prompt_template: |
+      请判断以下两个"总投资金额"是否数值相等。
+
+      允许差异:单位写法(如"1.2亿" == "12000万元" == "120000000元")、千分位逗号、
+      空白、人民币符号(¥/RMB)。
+      不允许差异:数值有任何实际差异(即使 0.01 元)。如无法可靠换算到统一单位,
+      判为不一致。
+
+      A: {a_value}
+      B: {b_value}
+
+      严格按 JSON 输出,不要任何额外说明:
+      {{"match": true|false, "reason": "<不超过30字的中文理由,需说明换算后的金额>"}}
+
+  # --- R003: 批复时间早于申报时间 ---
+  - id: "R003"
+    name: "批复时间早于申报时间"
+    description: "判断 field_a 的日期是否严格早于 field_b"
+    expected_field_names: ["批复时间", "申报时间"]
+    require_field_name: false
+    prompt_template: |
+      请判断 A 的日期是否严格早于 B 的日期(A < B)。
+
+      允许的日期格式:"2024年1月10日"、"2024-01-10"、"2024/01/10"、"二零二四年一月十日" 等。
+      若两个日期相等,或 A 晚于 B,或任一日期无法解析,均判为不一致。
+
+      A (批复时间): {a_value}
+      B (申报时间): {b_value}
+
+      严格按 JSON 输出,不要任何额外说明:
+      {{"match": true|false, "reason": "<不超过30字的中文理由,需说明解析后的两个日期>"}}
+
+  # --- R004: 建设单位名称基本一致 ---
+  # prompt_template 引用 {a_name}/{b_name},因此 require_field_name=true,
+  # 上游接口必须传 field_a.name / field_b.name,否则返 422。
+  - id: "R004"
+    name: "建设单位名称基本一致"
+    description: "容忍简称/全称/前后缀差异;把字段名注入 prompt,让 LLM 知道在判什么"
+    expected_field_names: ["建设单位", "建设单位"]
+    require_field_name: true
+    prompt_template: |
+      请判断字段"{a_name}"与字段"{b_name}"的两个值是否指向同一个法人主体。
+
+      允许差异:简称与全称、有/无行政区划前缀、"有限公司"与"有限责任公司"互换、
+      集团/分公司层级差异(如"XX集团" 与 "XX集团北京分公司"视为不同主体)。
+      不允许差异:名称中关键字明显不同(如"中铁"与"中建")。
+
+      A ({a_name}): {a_value}
+      B ({b_name}): {b_value}
+
+      严格按 JSON 输出,不要任何额外说明:
+      {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
+
+  # --- R005: 建设内容详情完全一致 ---
+  - id: "R005"
+    name: "建设内容详情完全一致"
+    description: "语义严格一致,允许排序/标点/格式差异,但内容项不能增减"
+    expected_field_names: ["建设内容", "建设内容"]
+    require_field_name: false
+    prompt_template: |
+      请判断以下两段"建设内容"是否在所列项目上严格一致。
+
+      允许差异:项目顺序、标点符号、空白、序号格式、措辞微调(如"建设道路 5 公里"
+      与"道路建设:5km")。
+      不允许差异:任一段多出或缺少任何子项目,或子项目的数量/规格/面积有差异。
+
+      A: {a_value}
+      B: {b_value}
+
+      严格按 JSON 输出,不要任何额外说明:
+      {{"match": true|false, "reason": "<不超过50字的中文理由,需点明差异项(如有)>"}}
