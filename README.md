@@ -50,6 +50,12 @@ make build && make up && make logs
 curl http://localhost:6549/health
 ```
 
+**Web 管理界面**(规则 CRUD + 试跑)直接打开:
+
+```
+http://localhost:6549/        # 自动跳转 /ui/
+```
+
 示例:项目代码一致性比对
 
 ```bash
@@ -66,8 +72,10 @@ curl -X POST http://localhost:6549/compare \
 
 ## 规则配置
 
-所有规则统一为 LLM 规则,字段:`id` / `name` / `description` / `prompt_template` / `require_field_name` 等。
-新增规则**不需改代码**:复制 `config/rules.yaml` 中一条已有规则,改 id 和 prompt 即可,下次请求自动生效。
+所有规则统一为 LLM 规则,字段:`id` / `name` / `description` / `prompt_template` / `system_prompt` / `require_field_name` 等。
+新增规则**不需改代码**:两种方式任选——
+- **Web UI**:打开 `http://localhost:6549/ui/`,在"规则管理"页点"新增规则",填好字段保存即可。每个字段下方都有用法说明。
+- **直接编辑 yaml**:复制 `config/rules.yaml` 中一条已有规则,改 id 和 prompt,下次请求自动生效;也可手动调 `POST /admin/reload-rules` 立刻刷新。
 
 详见 [docs/api/rules.md](docs/api/rules.md)。
 

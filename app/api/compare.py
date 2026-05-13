@@ -50,8 +50,7 @@ def compare(req: CompareRequest) -> CompareResponse:
             detail=f"rule_id 不存在: {req.rule_id}",
         )
 
-    # 规则级别的 name 必填校验:yaml 显式 require_field_name=true,或
-    # prompt_template 引用了 {a_name}/{b_name} 自动 imply。
+    # 规则级别的 name 必填校验:仅当 yaml 显式 require_field_name=true 时生效。
     if should_require_field_name(rule_cfg):
         missing = []
         if not (req.field_a.name or "").strip():

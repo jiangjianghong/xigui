@@ -12,12 +12,15 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
-from app.api import admin, compare, health
-from app.core.config import get_config, get_rules
+from app.api import admin, admin_rules, compare, health
+from app.core.config import PROJECT_ROOT, get_config, get_rules
 from app.core.logging import setup_logging
 
 # 必须最先调用，否则后续模块的 logger 输出可能用默认配置
@@ -39,7 +42,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         len(rules),
     )
     for r in rules:
-        log.info("  规则 %s [%s] %s", r.get("id"), r.get("type"), r.get("name", ""))
+        log.info("  规则 %s %s", r.get("id"), r.get("name", ""))
     yield
     log.info("服务关闭")
 
@@ -48,8 +51,8 @@ app = FastAPI(
     title="皖资规约 - 规则比对引擎",
     version="0.1.0",
     description=(
-        "投资项目文件合规审核第二阶段：根据规则 ID 对两个字段做语义/数值/时间"
-        "/严格比对，返回布尔结论 + 中文理由 + 耗时 + token 成本。"
+        "投资项目文件合规审核第二阶段:按规则 ID 调用 LLM 比对两个字段,"
+        "返回布尔结论 + 中文理由 + 耗时 + token 成本。规则配置见 config/rules.yaml,支持热加载。"
     ),
     lifespan=lifespan,
 )
@@ -57,6 +60,22 @@ app = FastAPI(
 app.include_router(health.router)
 app.include_router(compare.router)
 app.include_router(admin.router, prefix="/admin")
+app.include_router(admin_rules.router, prefix="/admin")
+
+
+# ---------------------------------------------------------------------------
+# UI 静态资源:挂到 /ui,根路径 / 自动 302 到 /ui/
+# ---------------------------------------------------------------------------
+
+_UI_DIR = PROJECT_ROOT / "ui"
+if _UI_DIR.is_dir():
+    app.mount("/ui", StaticFiles(directory=str(_UI_DIR), html=True), name="ui")
+
+    @app.get("/", include_in_schema=False)
+    def _root_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/ui/")
+else:
+    log.warning("UI 目录不存在: %s,跳过静态资源挂载", _UI_DIR)
 
 
 def main() -> None:

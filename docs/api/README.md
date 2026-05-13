@@ -48,7 +48,7 @@
 | `field_a` | object | 是 | 字段 A，含 `name`（可选）和 `value`（必填） |
 | `field_b` | object | 是 | 字段 B，结构同上 |
 | `field_x.value` | string | 是 | 字段的文本值 |
-| `field_x.name` | string | **看规则** | 字段名。**默认可省略**；若规则配了 `require_field_name: true` 或 `prompt_template` 引用了 `{a_name}`/`{b_name}`，缺则 422 |
+| `field_x.name` | string | **看规则** | 字段名。**默认可省略**;若规则配了 `require_field_name: true`,缺则 422 |
 
 请求示例(name 可省略,等价于完整写法):
 
@@ -158,3 +158,25 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
 ```json
 {"status": "ok", "llm_model": "qwen-plus", "llm_backend": "dashscope"}
 ```
+
+---
+
+### 5. 规则 CRUD(配合 Web UI)
+
+> 用 Web UI(`http://<host>:6549/ui/`)操作即可,以下是底层 HTTP 契约,便于脚本化批量导入/导出。
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| `GET` | `/admin/rules` | 列出全部规则,返回 `{count, rules: [...]}` |
+| `GET` | `/admin/rules/{id}` | 按 id 查询单条规则 |
+| `POST` | `/admin/rules` | 新增。请求体字段同 `rules.yaml` 中一条规则。id 冲突返 422 |
+| `PUT` | `/admin/rules/{id}` | 全量替换。请求体里的 id 必须与 URL 一致 |
+| `DELETE` | `/admin/rules/{id}` | 删除 |
+
+写操作完成后自动 reload,**无需重启**且**保留 yaml 文件里的注释**。
+
+### 6. Web 管理界面
+
+- 路径:`/ui/`(根路径 `/` 自动 302 跳转过来)
+- 内容:① 规则增删改查(每个字段含说明)② Playground 试跑(选规则 + 填字段值 + 看结果)
+- 用途:非开发者维护规则、调试 prompt 时尤其方便,改完一条规则点保存,效果立即可验。
