@@ -140,11 +140,24 @@ def test_update_rule(client, isolated_rules):
     assert "新模板" in after["prompt_template"]
 
 
-def test_update_id_mismatch_returns_422(client, isolated_rules):
+def test_update_id_clash_returns_422(client, isolated_rules):
+    """PUT 时 body.id 改成另一条已存在规则的 id → 422 防覆盖。"""
     payload = dict(NEW_RULE, id="R002")
     resp = client.put("/admin/rules/R001", json=payload)
     assert resp.status_code == 422
-    assert "不一致" in resp.json()["detail"]
+    assert "已被占用" in resp.json()["detail"]
+
+
+def test_update_with_rename(client, isolated_rules):
+    """PUT 时 body.id 改成一个全新 id → rename 成功。"""
+    payload = dict(NEW_RULE, id="R099", name="重命名后")
+    resp = client.put("/admin/rules/R001", json=payload)
+    assert resp.status_code == 200
+    assert resp.json()["rule_id"] == "R099"
+
+    assert client.get("/admin/rules/R001").status_code == 404
+    after = client.get("/admin/rules/R099").json()
+    assert after["name"] == "重命名后"
 
 
 def test_update_unknown_returns_404(client, isolated_rules):

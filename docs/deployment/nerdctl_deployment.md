@@ -67,17 +67,121 @@ scripts/ 下的 `start.sh` / `stop.sh` / `restart.sh` / `package_offline.sh`
 
 ## 三、首次部署(目标服务器有网)
 
-### 3.1 把项目文件夹拷过去
+> 假设目标机**能拉到容器基础镜像**(直连 Docker Hub 或走 §四 的国内/内部 Harbor 镜像源),但**连不上 GitLab**。
+> 所以源码要从开发机打包搬过去,镜像构建在目标机本地完成。
+> 如果目标机连容器镜像都拉不到,改走 [`offline_deployment.md`](offline_deployment.md)(连镜像也一起打包)。
+
+### 3.1 在开发机把项目打成压缩包
+
+在**项目根目录的上一级**执行,这样压缩包解压后是一个干净的 `wanzi_guizhe/` 目录。
 
 ```bash
-scp -r wanzi_guizhe/ root@target:/opt/
-# 或 rsync -avz wanzi_guizhe/ root@target:/opt/wanzi_guizhe/
+cd /home/yaocy           # 进入项目所在父目录(根据实际路径调整)
+
+# 打包前清掉本地缓存,避免把 .venv / __pycache__ / 历史日志一起带过去
+find wanzi_guizhe -type d -name '__pycache__' -prune -exec rm -rf {} +
+find wanzi_guizhe -type d -name '.pytest_cache' -prune -exec rm -rf {} +
+rm -f wanzi_guizhe/logs/*.log* 2>/dev/null
+
+# 打 tar.gz(带时间戳便于版本追溯),排除无关大文件
+TS=$(date +%Y%m%d_%H%M%S)
+tar --exclude='wanzi_guizhe/.git' \
+    --exclude='wanzi_guizhe/.venv' \
+    --exclude='wanzi_guizhe/data/*' \
+    --exclude='wanzi_guizhe/logs/*' \
+    --exclude='wanzi_guizhe/docker/offline' \
+    --exclude='*.pyc' \
+    -czvf wanzi_guizhe_${TS}.tar.gz wanzi_guizhe/
+
+ls -lh wanzi_guizhe_${TS}.tar.gz
+# 期望:几百 KB ~ 几 MB(纯源码 + 配置 + 文档,不含 .git 历史)
 ```
 
-### 3.2 准备配置
+**说明**:
+
+| 排除项 | 为什么 |
+| --- | --- |
+| `.git` | 历史动辄几十 MB,部署用不到 |
+| `.venv` | 宿主机虚拟环境,容器内会重装 |
+| `data/*` `logs/*` | 运行时产物,目标机重新生成 |
+| `docker/offline` | 离线镜像包(有的话),本流程不用 |
+
+如果一定要保留 `.git`(便于目标机查 commit 信息),把对应 `--exclude` 行去掉即可。
+
+### 3.2 传输到目标服务器
+
+```bash
+# 任选一种,看现场可达性
+scp wanzi_guizhe_${TS}.tar.gz root@target:/tmp/
+# 或 rsync(断点续传更稳)
+rsync -avzP wanzi_guizhe_${TS}.tar.gz root@target:/tmp/
+# 或经跳板机
+scp wanzi_guizhe_${TS}.tar.gz user@jumphost:/tmp/ && \
+  ssh user@jumphost "scp /tmp/wanzi_guizhe_${TS}.tar.gz root@target:/tmp/"
+```
+
+**完全无 ssh 通道时**(只能 U 盘/移动硬盘):
+
+```bash
+# 开发机
+cp wanzi_guizhe_${TS}.tar.gz /media/usb/
+
+# 目标机
+cp /media/usb/wanzi_guizhe_*.tar.gz /tmp/
+```
+
+建议同时算个 sha256 校验,防止传输过程出错:
+
+```bash
+# 开发机
+sha256sum wanzi_guizhe_${TS}.tar.gz
+# 目标机校验(对比上一步输出)
+sha256sum /tmp/wanzi_guizhe_${TS}.tar.gz
+```
+
+### 3.3 目标机解压到 /opt/
 
 ```bash
 ssh root@target
+
+# 创建目标目录(/opt 是常见的第三方应用安装路径)
+sudo mkdir -p /opt
+cd /opt
+
+# 解压(tar 会自动创建 wanzi_guizhe/ 子目录)
+sudo tar -xzvf /tmp/wanzi_guizhe_*.tar.gz -C /opt/
+
+# 检查解压结果
+ls -la /opt/wanzi_guizhe/
+# 期望看到 app/ config/ docker/ ui/ Makefile docker-compose.yml 等
+
+# 调整属主(若用非 root 运行)
+sudo chown -R $(whoami):$(whoami) /opt/wanzi_guizhe/
+
+# 删除压缩包,释放磁盘
+rm /tmp/wanzi_guizhe_*.tar.gz
+```
+
+**升级时**(已经部署过、要替换为新版本):
+
+```bash
+cd /opt
+sudo mv wanzi_guizhe wanzi_guizhe_$(date +%Y%m%d_%H%M%S)_bak    # 旧版备份
+sudo tar -xzvf /tmp/wanzi_guizhe_*.tar.gz -C /opt/
+# 把旧的 .env / config 拷回来(如果配置已根据现场调过)
+cp wanzi_guizhe_*_bak/.env wanzi_guizhe/.env
+cp wanzi_guizhe_*_bak/config/config.yaml wanzi_guizhe/config/config.yaml
+cp wanzi_guizhe_*_bak/config/rules.yaml wanzi_guizhe/config/rules.yaml
+# 重启容器
+cd wanzi_guizhe && make restart CONTAINER_CMD=nerdctl
+```
+
+> ⚠️ 升级时**一定要先备份 `config/rules.yaml`**——这是现场维护人员通过 UI 改动过的活配置,
+> 直接覆盖会丢失所有人工编辑。压缩包里带的是开发版示例规则。
+
+### 3.4 准备配置
+
+```bash
 cd /opt/wanzi_guizhe
 
 cp .env.example .env
@@ -86,7 +190,7 @@ cp .env.example .env
 #   - 内网调用确认 llm.api_base 可达
 ```
 
-### 3.3 构建并启动
+### 3.5 构建并启动
 
 ```bash
 # 一条龙写法(最推荐,国内 + nerdctl):
@@ -109,17 +213,20 @@ make logs
 
 若目标机能直连 Docker Hub,`PYTHON_IMAGE` 可以省略,走 Dockerfile 默认值。
 
-### 3.4 验证
+### 3.6 验证
 
 ```bash
 curl http://localhost:6549/health
 # 期望返回 {"status":"ok","rules_loaded":5,...}
 
-# 跑一次确定性比对(不消耗 token)
+# 跑一次比对(LLM 在线,会消耗少量 token)
 curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
   -d '{"rule_id":"R001",
        "field_a":{"value":"  2024-001 "},
        "field_b":{"value":"2024-001"}}'
+
+# 浏览器打开 Web 管理界面
+# http://<target-ip>:6549/ui/
 ```
 
 ## 四、国内拉 `python:3.12-slim` 加速

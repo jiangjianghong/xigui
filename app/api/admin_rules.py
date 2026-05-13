@@ -134,14 +134,8 @@ def create_rule(payload: RuleIn) -> dict[str, Any]:
     return {"status": "ok", "rule_id": payload.id, "rules_loaded": n}
 
 
-@router.put("/rules/{rule_id}", summary="按 id 全量修改规则")
+@router.put("/rules/{rule_id}", summary="按 id 全量修改规则(支持 rename:body.id != url id)")
 def update_rule(rule_id: str, payload: RuleIn) -> dict[str, Any]:
-    if payload.id != rule_id:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"URL 中 id ({rule_id}) 与请求体 id ({payload.id}) 不一致",
-        )
-
     path = _rules_yaml_path()
     doc = load_rules_doc(path)
     idx = find_rule_index(doc, rule_id)
@@ -151,11 +145,23 @@ def update_rule(rule_id: str, payload: RuleIn) -> dict[str, Any]:
             detail=f"rule_id 不存在: {rule_id}",
         )
 
+    # rename:新 id 不能撞上其他规则
+    if payload.id != rule_id:
+        clash = find_rule_index(doc, payload.id)
+        if clash >= 0 and clash != idx:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"目标 id 已被占用: {payload.id}",
+            )
+
     doc["rules"][idx] = normalize_rule(payload.model_dump())
     save_rules_doc(path, doc)
     n = reload_rules()
-    log.info("更新规则 id=%s,当前共 %d 条", rule_id, n)
-    return {"status": "ok", "rule_id": rule_id, "rules_loaded": n}
+    if payload.id != rule_id:
+        log.info("更新规则 id=%s → %s,当前共 %d 条", rule_id, payload.id, n)
+    else:
+        log.info("更新规则 id=%s,当前共 %d 条", rule_id, n)
+    return {"status": "ok", "rule_id": payload.id, "rules_loaded": n}
 
 
 @router.delete("/rules/{rule_id}", summary="按 id 删除规则")

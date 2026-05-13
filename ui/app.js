@@ -96,7 +96,7 @@ function renderRules() {
             <td class="text-surface-500">${escape(expected)}</td>
             <td>${reqBadge}</td>
             <td>${sysBadge}</td>
-            <td class="text-right">
+            <td>
                 <button class="btn-ghost" onclick="openEdit('${escape(r.id)}')"><i class="ri-edit-line"></i> 编辑</button>
                 <button class="btn-ghost text-red-600" onclick="openDel('${escape(r.id)}')"><i class="ri-delete-bin-line"></i> 删除</button>
             </td>
@@ -127,7 +127,7 @@ async function openEdit(id) {
     try {
         const rule = await api('GET', `/admin/rules/${encodeURIComponent(id)}`);
         document.getElementById('modal-title').textContent = `编辑规则 ${id}`;
-        document.getElementById('f-id').disabled = true;  // id 不允许在编辑时改
+        document.getElementById('f-id').disabled = false;  // 允许 rename(下游缓存风险由保存时确认)
         fillForm(rule);
         document.getElementById('rule-modal').classList.remove('hidden');
     } catch (e) {
@@ -174,6 +174,11 @@ async function saveRule() {
     // 友好提示:模板用了 {a_name}/{b_name} 但没勾 require_field_name
     if (/\{a_name\}|\{b_name\}/.test(payload.prompt_template) && !payload.require_field_name) {
         if (!confirm('prompt_template 引用了 {a_name} 或 {b_name},但 require_field_name 是 false,LLM 将拿到空字符串。确认继续吗?')) return;
+    }
+
+    // 编辑模式下 id 改了 = rename,提醒下游缓存风险
+    if (MODAL_MODE === 'edit' && payload.id !== MODAL_ORIG_ID) {
+        if (!confirm(`规则 ID 将从 "${MODAL_ORIG_ID}" 改为 "${payload.id}"。下游若缓存了旧 ID,调用会立即返 404。确认继续吗?`)) return;
     }
 
     const btn = document.getElementById('modal-save');
