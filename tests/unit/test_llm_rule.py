@@ -107,3 +107,45 @@ def test_should_require_field_name_missing_defaults_false():
     """未配置时默认 False(不校验);即使 prompt_template 含 {a_name} 也不会自动推导。"""
     cfg = {"id": "X", "prompt_template": "判断 {a_name}: {a_value} vs {b_value}"}
     assert should_require_field_name(cfg) is False
+
+
+def test_system_prompt_explicit_sent(monkeypatch):
+    """yaml 写了 system_prompt 时,messages 应含 system 角色消息。"""
+    cfg = {
+        "id": "T_SYS",
+        "system_prompt": "你是测试专家。",
+        "prompt_template": "A:{a_value} B:{b_value}",
+    }
+    captured: dict = {}
+
+    def _capture(messages, **kwargs):
+        captured["messages"] = messages
+        return '{"match": true, "reason": "ok"}', _USAGE
+
+    monkeypatch.setattr(llm_rule, "chat_json", _capture)
+    build_rule(cfg).compare("a", "b")
+
+    msgs = captured["messages"]
+    assert msgs[0]["role"] == "system"
+    assert msgs[0]["content"] == "你是测试专家。"
+    assert msgs[1]["role"] == "user"
+
+
+def test_system_prompt_empty_omits_system_message(monkeypatch):
+    """system_prompt 缺失或为空时,messages 中不应有 system 角色消息。"""
+    cfg = {
+        "id": "T_NOSYS",
+        "prompt_template": "A:{a_value} B:{b_value}",
+    }
+    captured: dict = {}
+
+    def _capture(messages, **kwargs):
+        captured["messages"] = messages
+        return '{"match": true, "reason": "ok"}', _USAGE
+
+    monkeypatch.setattr(llm_rule, "chat_json", _capture)
+    build_rule(cfg).compare("a", "b")
+
+    msgs = captured["messages"]
+    assert len(msgs) == 1
+    assert msgs[0]["role"] == "user"

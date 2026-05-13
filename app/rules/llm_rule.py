@@ -19,12 +19,6 @@ log = logging.getLogger("wanzi.rules.llm")
 # 兜底:当模型没严格输出纯 JSON 时,从一段文本里挖第一个 {...} 块
 _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
 
-# 默认系统提示。若 yaml 里没显式写,就用这个;yaml 写了 system_prompt 字段则覆盖。
-DEFAULT_SYSTEM_PROMPT = (
-    "你是一位资深的投资项目文件合规审核专家。任务:按用户给出的判定标准,比较两个"
-    "字段值是否一致,并严格按 JSON 输出结论,不要任何额外说明、Markdown 标记或注释。"
-)
-
 # 没有 prompt_template 时的最后兜底,避免崩溃
 _FALLBACK_TEMPLATE = (
     "请判断以下两个字段在语义上是否一致。\n"
@@ -62,7 +56,7 @@ class LLMRule:
         self.cfg = cfg
         self.id: str = cfg["id"]
         self.name: str = cfg.get("name", "")
-        self.system_prompt: str = cfg.get("system_prompt") or DEFAULT_SYSTEM_PROMPT
+        self.system_prompt: str = cfg.get("system_prompt") or ""
         self.prompt_template: str = cfg.get("prompt_template") or _FALLBACK_TEMPLATE
 
     def _render_user_prompt(
@@ -98,10 +92,10 @@ class LLMRule:
         user_prompt = self._render_user_prompt(
             a_value, b_value, a_name=a_name, b_name=b_name,
         )
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
+        messages: list[dict[str, Any]] = []
+        if self.system_prompt:
+            messages.append({"role": "system", "content": self.system_prompt})
+        messages.append({"role": "user", "content": user_prompt})
 
         # LLMTimeout / LLMUpstreamError 直接向上抛,由 API 层映射 504/502
         content, usage = chat_json(messages)

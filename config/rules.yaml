@@ -9,7 +9,8 @@
 #                          - true:  缺 name 直接返 422
 #                          - false: 不校验
 #                          (建议每条规则都显式写出来,不依赖默认值)
-#   system_prompt          可选。LLM 的系统提示。不写就用默认的"合规审核专家"角色。
+#   system_prompt          LLM 的系统提示。建议每条规则按自身领域显式声明;
+#                          留空(空字符串)则不向模型发送 system 消息。
 #   prompt_template        Prompt 模板。所有规则的判定标准都由这里描述。
 #                          支持占位符:
 #                            {a_value} {b_value}   字段值(必有)
@@ -30,6 +31,7 @@ rules:
     description: "判断两个项目代码是否指向同一项目"
     expected_field_names: ["项目代码", "项目代码"]
     require_field_name: false
+    system_prompt: "你是熟悉政府投资项目文件比对的合规审核员,专注于字段字面与语义一致性判定,输出严格遵守约定格式。"
     prompt_template: |
       请判断以下两个"项目代码"字符串是否指向同一项目。
 
@@ -48,6 +50,7 @@ rules:
     description: "判断两个总投资金额是否数值相等(允许单位差异)"
     expected_field_names: ["总投资", "总投资金额"]
     require_field_name: false
+    system_prompt: "你是熟悉政府投资项目财务管理的注册会计师,擅长金额单位换算(亿/万/元)与一致性核对,输出严格遵守约定格式。"
     prompt_template: |
       请判断以下两个"总投资金额"是否数值相等。
 
@@ -68,10 +71,11 @@ rules:
     description: "判断 field_a 的日期是否严格早于 field_b"
     expected_field_names: ["批复时间", "申报时间"]
     require_field_name: false
+    system_prompt: "你是熟悉政府项目审批流程的合规审核员,擅长解析各类中文日期写法并比较先后,输出严格遵守约定格式。"
     prompt_template: |
       请判断 A 的日期是否严格早于 B 的日期(A < B)。
 
-      允许的日期格式:"2024年1月10日"、"2024-01-10"、"2024/01/10"、"二零二四年一月十日" 等。
+      常见的日期格式:"2024年1月10日"、"2024-01-10"、"2024/01/10"、"二零二四年一月十日" 等。
       若两个日期相等,或 A 晚于 B,或任一日期无法解析,均判为不一致。
 
       A (批复时间): {a_value}
@@ -88,6 +92,7 @@ rules:
     description: "容忍简称/全称/前后缀差异;把字段名注入 prompt,让 LLM 知道在判什么"
     expected_field_names: ["建设单位", "建设单位"]
     require_field_name: true
+    system_prompt: "你是熟悉企业法人主体识别的合规审核员,能区分简称、全称、行政区划前缀、母公司与分支机构,输出严格遵守约定格式。"
     prompt_template: |
       请判断字段"{a_name}"与字段"{b_name}"的两个值是否指向同一个法人主体。
 
@@ -107,6 +112,7 @@ rules:
     description: "语义严格一致,允许排序/标点/格式差异,但内容项不能增减"
     expected_field_names: ["建设内容", "建设内容"]
     require_field_name: false
+    system_prompt: "你是熟悉工程项目建设内容描述的合规审核员,擅长把两段自然语言列表对齐后比较子项目增减与规格差异,输出严格遵守约定格式。"
     prompt_template: |
       请判断以下两段"建设内容"是否在所列项目上严格一致。
 
