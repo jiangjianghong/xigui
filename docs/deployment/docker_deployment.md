@@ -6,10 +6,11 @@
 
 | 宿主机 | 容器内 | 用途 |
 | --- | --- | --- |
-| `./app` | `/app/app` | 应用代码，更新只需替换文件后 restart |
-| `./config` | `/app/config` | 运行配置（含 rules.yaml，修改即生效） |
+| `./app` | `/app/app` | 应用代码,更新只需替换文件后 restart |
+| `./config` | `/app/config` | 运行配置(含 rules.yaml,修改即生效) |
+| `./ui` | `/app/ui` | Web 管理界面静态资源(规则 CRUD + Playground) |
 | `./logs` | `/app/logs` | 日志输出 |
-| `./data` | `/app/data` | 业务数据（当前阶段未使用，预留） |
+| `./data` | `/app/data` | 业务数据(当前阶段未使用,预留) |
 
 ## 首次部署
 
@@ -62,10 +63,18 @@ docker compose ps    # 查看状态
 ```bash
 # 健康检查
 curl http://localhost:6549/health
+# {"status":"ok","service":"wanzi_guizhe","version":"0.1.0","rules_loaded":5,
+#  "rule_ids":["R001","R002","R003","R004","R005"]}
 
-# 一次确定性比对（不调 LLM）
+# Web 管理界面(浏览器直接打开)
+# http://localhost:6549/        ← 自动跳到 /ui/
+# http://localhost:6549/ui/     ← 规则增删改查 + Playground 试跑
+
+# 一次实际比对(会调 LLM,需要 config.yaml 里填了真实 api_key)
 curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
-  -d '{"rule_id":"R001","field_a":{"name":"项目代码","value":"  X "},"field_b":{"name":"项目代码","value":"x"}}'
+  -d '{"rule_id":"R001",
+       "field_a":{"value":"  2024-001 "},
+       "field_b":{"value":"2024-001"}}'
 
 # 看日志
 tail -f logs/wanzi_guizhe.log
