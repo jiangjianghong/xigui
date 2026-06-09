@@ -1,6 +1,6 @@
 # 服务器迁移指南
 
-将一台已运行 `wanzi_guizhe` 的服务器搬迁/复制到另一台服务器。
+将一台已运行 `ai_cross_check` 的服务器搬迁/复制到另一台服务器。
 适用场景：换硬件、换机房、灾备恢复等。
 
 ## 一、迁移内容清单
@@ -22,16 +22,16 @@
 ### 2.1 在原服务器上打包
 
 ```bash
-cd /path/to/wanzi_guizhe
+cd /path/to/ai_cross_check
 
 # 1) 暂停服务保证数据一致性
 docker compose stop app
 
 # 2) 导出当前运行的镜像
-docker save -o /tmp/wanzi_guizhe_image.tar wanzi_guizhe:latest
+docker save -o /tmp/ai_cross_check_image.tar ai_cross_check:latest
 
 # 3) 打包整个项目目录（含 .env / logs）
-tar -czf /tmp/wanzi_guizhe_migrate_$(date +%F).tar.gz \
+tar -czf /tmp/ai_cross_check_migrate_$(date +%F).tar.gz \
   --exclude='.git' \
   --exclude='docker/offline' \
   -C /path/to .
@@ -40,7 +40,7 @@ tar -czf /tmp/wanzi_guizhe_migrate_$(date +%F).tar.gz \
 ### 2.2 传输
 
 ```bash
-scp /tmp/wanzi_guizhe_migrate_*.tar.gz /tmp/wanzi_guizhe_image.tar user@new-host:/opt/
+scp /tmp/ai_cross_check_migrate_*.tar.gz /tmp/ai_cross_check_image.tar user@new-host:/opt/
 ```
 
 ### 2.3 在新服务器上还原
@@ -49,11 +49,11 @@ scp /tmp/wanzi_guizhe_migrate_*.tar.gz /tmp/wanzi_guizhe_image.tar user@new-host
 
 ```bash
 cd /opt
-mkdir wanzi_guizhe && tar -xzf wanzi_guizhe_migrate_*.tar.gz -C wanzi_guizhe
-cd wanzi_guizhe
+mkdir ai_cross_check && tar -xzf ai_cross_check_migrate_*.tar.gz -C ai_cross_check
+cd ai_cross_check
 
 # 加载镜像
-docker load -i /opt/wanzi_guizhe_image.tar
+docker load -i /opt/ai_cross_check_image.tar
 
 # 启动
 docker compose up -d

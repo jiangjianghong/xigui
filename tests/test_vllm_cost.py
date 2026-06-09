@@ -8,7 +8,7 @@
 
 期望
 ----
-脚本会发一条"建设单位名称是否一致"的语义判定请求,模拟皖资规约项目里
+脚本会发一条"建设单位名称是否一致"的语义判定请求,模拟AI交叉校验项目里
 LLM 规则走 LLM 的真实路径,然后打印:
 
 - HTTP 是否成功
@@ -98,7 +98,7 @@ def main() -> int:
 
     ok = all(isinstance(v, int) and v > 0 for v in (prompt_tokens, completion_tokens, total_tokens))
     if not ok:
-        print("\n[FAIL] usage 字段缺失或为 0,皖资规约项目里 cost 将为 0")
+        print("\n[FAIL] usage 字段缺失或为 0,AI交叉校验项目里 cost 将为 0")
         return 4
 
     print("\n[OK] usage 三件套齐全且 > 0,项目 cost 提取逻辑可信")

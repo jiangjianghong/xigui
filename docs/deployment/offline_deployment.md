@@ -11,10 +11,10 @@ make package-offline
 ```
 
 脚本会：
-1. `docker compose build` 构建出 `wanzi_guizhe:latest`
+1. `docker compose build` 构建出 `ai_cross_check:latest`
 2. `docker save` 将镜像导出到 `docker/offline/image.tar`
 3. 在 `python:3.12-slim` 容器中 `pip download` 把所有依赖 wheel 落到 `docker/offline/wheels/`（便于在容器外重建/调试时也可离线 pip 安装）
-4. 将下面这些一并打成 `wanzi_guizhe_offline_<timestamp>.tar.gz`：
+4. 将下面这些一并打成 `ai_cross_check_offline_<timestamp>.tar.gz`：
    ```
    app/  config/  docker/  docker-compose.yml  requirements/
    scripts/  .env.example  .dockerignore  .gitignore
@@ -22,14 +22,14 @@ make package-offline
    docker/offline/wheels/
    ```
 
-产物示例：`wanzi_guizhe_offline_20260512_143000.tar.gz`
+产物示例：`ai_cross_check_offline_20260512_143000.tar.gz`
 
 ## 二、传输到目标服务器
 
 任意手段：`scp`、U 盘、内网文件服务器等。
 
 ```bash
-scp wanzi_guizhe_offline_*.tar.gz user@target-host:/opt/
+scp ai_cross_check_offline_*.tar.gz user@target-host:/opt/
 ```
 
 ## 三、目标服务器上解压并加载
@@ -39,12 +39,12 @@ scp wanzi_guizhe_offline_*.tar.gz user@target-host:/opt/
 
 ```bash
 cd /opt
-mkdir wanzi_guizhe && tar -xzf wanzi_guizhe_offline_*.tar.gz -C wanzi_guizhe
-cd wanzi_guizhe
+mkdir ai_cross_check && tar -xzf ai_cross_check_offline_*.tar.gz -C ai_cross_check
+cd ai_cross_check
 
 # 1) 加载离线 Docker 镜像
 docker load -i docker/offline/image.tar
-docker images | grep wanzi_guizhe
+docker images | grep ai_cross_check
 
 # 2) 准备运行配置
 cp .env.example .env
@@ -72,7 +72,7 @@ curl -X POST http://localhost:6549/admin/reload-rules
 
 ## 五、常见问题
 
-- **镜像加载后版本不对** —— `docker load` 只会按打包时的 tag 还原，如需替换请先 `docker rmi wanzi_guizhe:latest` 再重新 load。
+- **镜像加载后版本不对** —— `docker load` 只会按打包时的 tag 还原，如需替换请先 `docker rmi ai_cross_check:latest` 再重新 load。
 - **挂载目录权限问题** —— 容器内默认以 `root` 运行，如目标系统启用了 user namespace，可在 `docker-compose.yml` 中加 `user: "1000:1000"`。
 - **wheels 目录有什么用** —— 当需要在宿主机上（而非容器内）直接 pip 安装时使用：`pip install --no-index --find-links docker/offline/wheels -r requirements/prod.txt`
 - **LLM 调不通** —— 检查 `config/config.yaml` 的 `llm.api_base` 在目标服务器是否可达；本地 vLLM 部署时把 `backend` 改成 `vllm` 并指向本地服务地址。

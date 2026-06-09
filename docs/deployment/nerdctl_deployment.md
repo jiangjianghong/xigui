@@ -80,27 +80,27 @@ scripts/ 下的 `start.sh` / `stop.sh` / `restart.sh` / `package_offline.sh`
 
 ### 3.1 在开发机把项目打成压缩包
 
-在**项目根目录的上一级**执行,这样压缩包解压后是一个干净的 `wanzi_guizhe/` 目录。
+在**项目根目录的上一级**执行,这样压缩包解压后是一个干净的 `ai_cross_check/` 目录。
 
 ```bash
 cd /home/yaocy           # 进入项目所在父目录(根据实际路径调整)
 
 # 打包前清掉本地缓存,避免把 .venv / __pycache__ / 历史日志一起带过去
-find wanzi_guizhe -type d -name '__pycache__' -prune -exec rm -rf {} +
-find wanzi_guizhe -type d -name '.pytest_cache' -prune -exec rm -rf {} +
-rm -f wanzi_guizhe/logs/*.log* 2>/dev/null
+find ai_cross_check -type d -name '__pycache__' -prune -exec rm -rf {} +
+find ai_cross_check -type d -name '.pytest_cache' -prune -exec rm -rf {} +
+rm -f ai_cross_check/logs/*.log* 2>/dev/null
 
 # 打 tar.gz(带时间戳便于版本追溯),排除无关大文件
 TS=$(date +%Y%m%d_%H%M%S)
-tar --exclude='wanzi_guizhe/.git' \
-    --exclude='wanzi_guizhe/.venv' \
-    --exclude='wanzi_guizhe/data/*' \
-    --exclude='wanzi_guizhe/logs/*' \
-    --exclude='wanzi_guizhe/docker/offline' \
+tar --exclude='ai_cross_check/.git' \
+    --exclude='ai_cross_check/.venv' \
+    --exclude='ai_cross_check/data/*' \
+    --exclude='ai_cross_check/logs/*' \
+    --exclude='ai_cross_check/docker/offline' \
     --exclude='*.pyc' \
-    -czvf wanzi_guizhe_${TS}.tar.gz wanzi_guizhe/
+    -czvf ai_cross_check_${TS}.tar.gz ai_cross_check/
 
-ls -lh wanzi_guizhe_${TS}.tar.gz
+ls -lh ai_cross_check_${TS}.tar.gz
 # 期望:几百 KB ~ 几 MB(纯源码 + 配置 + 文档,不含 .git 历史)
 ```
 
@@ -119,31 +119,31 @@ ls -lh wanzi_guizhe_${TS}.tar.gz
 
 ```bash
 # 任选一种,看现场可达性
-scp wanzi_guizhe_${TS}.tar.gz root@target:/tmp/
+scp ai_cross_check_${TS}.tar.gz root@target:/tmp/
 # 或 rsync(断点续传更稳)
-rsync -avzP wanzi_guizhe_${TS}.tar.gz root@target:/tmp/
+rsync -avzP ai_cross_check_${TS}.tar.gz root@target:/tmp/
 # 或经跳板机
-scp wanzi_guizhe_${TS}.tar.gz user@jumphost:/tmp/ && \
-  ssh user@jumphost "scp /tmp/wanzi_guizhe_${TS}.tar.gz root@target:/tmp/"
+scp ai_cross_check_${TS}.tar.gz user@jumphost:/tmp/ && \
+  ssh user@jumphost "scp /tmp/ai_cross_check_${TS}.tar.gz root@target:/tmp/"
 ```
 
 **完全无 ssh 通道时**(只能 U 盘/移动硬盘):
 
 ```bash
 # 开发机
-cp wanzi_guizhe_${TS}.tar.gz /media/usb/
+cp ai_cross_check_${TS}.tar.gz /media/usb/
 
 # 目标机
-cp /media/usb/wanzi_guizhe_*.tar.gz /tmp/
+cp /media/usb/ai_cross_check_*.tar.gz /tmp/
 ```
 
 建议同时算个 sha256 校验,防止传输过程出错:
 
 ```bash
 # 开发机
-sha256sum wanzi_guizhe_${TS}.tar.gz
+sha256sum ai_cross_check_${TS}.tar.gz
 # 目标机校验(对比上一步输出)
-sha256sum /tmp/wanzi_guizhe_${TS}.tar.gz
+sha256sum /tmp/ai_cross_check_${TS}.tar.gz
 ```
 
 ### 3.3 目标机解压到 /opt/
@@ -155,32 +155,32 @@ ssh root@target
 sudo mkdir -p /opt
 cd /opt
 
-# 解压(tar 会自动创建 wanzi_guizhe/ 子目录)
-sudo tar -xzvf /tmp/wanzi_guizhe_*.tar.gz -C /opt/
+# 解压(tar 会自动创建 ai_cross_check/ 子目录)
+sudo tar -xzvf /tmp/ai_cross_check_*.tar.gz -C /opt/
 
 # 检查解压结果
-ls -la /opt/wanzi_guizhe/
+ls -la /opt/ai_cross_check/
 # 期望看到 app/ config/ docker/ ui/ Makefile docker-compose.yml 等
 
 # 调整属主(若用非 root 运行)
-sudo chown -R $(whoami):$(whoami) /opt/wanzi_guizhe/
+sudo chown -R $(whoami):$(whoami) /opt/ai_cross_check/
 
 # 删除压缩包,释放磁盘
-rm /tmp/wanzi_guizhe_*.tar.gz
+rm /tmp/ai_cross_check_*.tar.gz
 ```
 
 **升级时**(已经部署过、要替换为新版本):
 
 ```bash
 cd /opt
-sudo mv wanzi_guizhe wanzi_guizhe_$(date +%Y%m%d_%H%M%S)_bak    # 旧版备份
-sudo tar -xzvf /tmp/wanzi_guizhe_*.tar.gz -C /opt/
+sudo mv ai_cross_check ai_cross_check_$(date +%Y%m%d_%H%M%S)_bak    # 旧版备份
+sudo tar -xzvf /tmp/ai_cross_check_*.tar.gz -C /opt/
 # 把旧的 .env / config 拷回来(如果配置已根据现场调过)
-cp wanzi_guizhe_*_bak/.env wanzi_guizhe/.env
-cp wanzi_guizhe_*_bak/config/config.yaml wanzi_guizhe/config/config.yaml
-cp wanzi_guizhe_*_bak/config/rules.yaml wanzi_guizhe/config/rules.yaml
+cp ai_cross_check_*_bak/.env ai_cross_check/.env
+cp ai_cross_check_*_bak/config/config.yaml ai_cross_check/config/config.yaml
+cp ai_cross_check_*_bak/config/rules.yaml ai_cross_check/config/rules.yaml
 # 重启容器
-cd wanzi_guizhe && make restart CONTAINER_CMD=nerdctl
+cd ai_cross_check && make restart CONTAINER_CMD=nerdctl
 ```
 
 > ⚠️ 升级时**一定要先备份 `config/rules.yaml`**——这是现场维护人员通过 UI 改动过的活配置,
@@ -189,7 +189,7 @@ cd wanzi_guizhe && make restart CONTAINER_CMD=nerdctl
 ### 3.4 准备配置
 
 ```bash
-cd /opt/wanzi_guizhe
+cd /opt/ai_cross_check
 
 cp .env.example .env
 # 编辑 config/config.yaml:

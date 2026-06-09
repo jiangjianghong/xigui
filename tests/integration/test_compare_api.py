@@ -25,7 +25,7 @@ def test_health_reports_rules():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert body["service"] == "wanzi_guizhe"
+    assert body["service"] == "ai_cross_check"
     assert body["rules_loaded"] >= 5
     assert {"R001", "R002", "R003", "R004", "R005"}.issubset(set(body["rule_ids"]))
 

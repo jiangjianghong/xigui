@@ -1,4 +1,4 @@
-// 皖资规约 · 规则管理 + Playground
+// AI交叉校验 · 规则管理 + Playground
 // 与后端的契约:
 //   GET  /admin/rules           列表
 //   GET  /admin/rules/{id}      详情

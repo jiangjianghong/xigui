@@ -14,7 +14,7 @@ from typing import Any
 from app.core.llm_client import chat_json
 from app.rules.base import CompareResult
 
-log = logging.getLogger("wanzi.rules.llm")
+log = logging.getLogger("aicheck.rules.llm")
 
 # 兜底:当模型没严格输出纯 JSON 时,从一段文本里挖第一个 {...} 块
 _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")

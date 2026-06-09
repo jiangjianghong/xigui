@@ -25,7 +25,7 @@
 ```json
 {
   "status": "ok",
-  "service": "wanzi_guizhe",
+  "service": "ai_cross_check",
   "version": "0.1.0",
   "rules_loaded": 5,
   "rule_ids": ["R001", "R002", "R003", "R004", "R005"]

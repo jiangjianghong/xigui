@@ -100,7 +100,7 @@ prompt 编写要点见 [`docs/api/rules.md §4`](../api/rules.md)。
 
 ## 调试技巧
 
-- **看日志**:`tail -f logs/wanzi_guizhe.log` 同时观察 docker stdout。日志含 `rule_id / match / ms / usage / reason`,可 grep
+- **看日志**:`tail -f logs/ai_cross_check.log` 同时观察 docker stdout。日志含 `rule_id / match / ms / usage / reason`,可 grep
 - **DEBUG 级别**:把 `config/config.yaml` 的 `app.log_level` 改成 `debug`,会打印 LLM 原始响应片段
 - **JSON 模式不工作**:如果某些模型不支持 `response_format=json_object`,在 `config.yaml` 的 `llm` 节加 `use_json_mode: false`,依靠 prompt 强约束即可(系统有正则兜底)
 - **测试模式**:`tests/integration/test_compare_api.py` 用 `monkeypatch` 替换 `chat_json`,无需真实 LLM key 也能跑通全部规则

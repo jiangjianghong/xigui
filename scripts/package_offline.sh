@@ -8,8 +8,8 @@ cd "$(dirname "$0")/.."
 
 CONTAINER_CMD="${CONTAINER_CMD:-docker}"
 OUT_DIR="docker/offline"
-IMAGE_TAG="wanzi_guizhe:latest"
-BUNDLE_NAME="wanzi_guizhe_offline_$(date +%Y%m%d_%H%M%S).tar.gz"
+IMAGE_TAG="ai_cross_check:latest"
+BUNDLE_NAME="ai_cross_check_offline_$(date +%Y%m%d_%H%M%S).tar.gz"
 # 可通过 PYTHON_IMAGE 切换基础镜像源(国内加速)
 PYTHON_IMAGE="${PYTHON_IMAGE:-python:3.12-slim}"
 

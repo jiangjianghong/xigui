@@ -15,8 +15,8 @@
 ## 首次部署
 
 ```bash
-git clone <repo> wanzi_guizhe
-cd wanzi_guizhe
+git clone <repo> ai_cross_check
+cd ai_cross_check
 
 cp .env.example .env
 # 编辑 config/config.yaml 填入 llm.api_key（或部署本地 vLLM 时切 backend=vllm）
@@ -63,7 +63,7 @@ docker compose ps    # 查看状态
 ```bash
 # 健康检查
 curl http://localhost:6549/health
-# {"status":"ok","service":"wanzi_guizhe","version":"0.1.0","rules_loaded":5,
+# {"status":"ok","service":"ai_cross_check","version":"0.1.0","rules_loaded":5,
 #  "rule_ids":["R001","R002","R003","R004","R005"]}
 
 # Web 管理界面(浏览器直接打开)
@@ -77,5 +77,5 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
        "field_b":{"value":"2024-001"}}'
 
 # 看日志
-tail -f logs/wanzi_guizhe.log
+tail -f logs/ai_cross_check.log
 ```

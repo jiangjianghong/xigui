@@ -13,7 +13,7 @@ from fastapi import APIRouter
 from app.core.config import reload_config, reload_rules
 
 router = APIRouter(tags=["admin"])
-log = logging.getLogger("wanzi.admin")
+log = logging.getLogger("aicheck.admin")
 
 
 @router.post("/reload-rules", summary="强制重新加载 rules.yaml")

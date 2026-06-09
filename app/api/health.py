@@ -14,7 +14,7 @@ def health() -> dict:
     rules = get_rules()
     return {
         "status": "ok",
-        "service": "wanzi_guizhe",
+        "service": "ai_cross_check",
         "version": "0.1.0",
         "rules_loaded": len(rules),
         "rule_ids": [r.get("id") for r in rules],

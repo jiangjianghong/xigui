@@ -3,8 +3,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: wanzi_guizhe:latest
-    container_name: wanzi_guizhe_app
+    image: ai_cross_check:latest
+    container_name: ai_cross_check_app
     restart: always
     environment:
       PYTHONUNBUFFERED: "1"

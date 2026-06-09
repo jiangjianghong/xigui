@@ -27,7 +27,7 @@ from app.core.rules_io import (
 )
 
 router = APIRouter(tags=["admin-rules"])
-log = logging.getLogger("wanzi.admin.rules")
+log = logging.getLogger("aicheck.admin.rules")
 
 
 # ---------------------------------------------------------------------------

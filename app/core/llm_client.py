@@ -22,7 +22,7 @@ from openai import OpenAI
 
 from app.core.config import build_extra_body, get_config
 
-log = logging.getLogger("wanzi.llm")
+log = logging.getLogger("aicheck.llm")
 
 
 class LLMTimeout(Exception):

@@ -20,7 +20,7 @@ from app.rules.registry import build_rule, should_require_field_name
 from app.schemas.compare import CompareRequest, CompareResponse, Cost
 
 router = APIRouter(tags=["compare"])
-log = logging.getLogger("wanzi.compare")
+log = logging.getLogger("aicheck.compare")
 
 
 def _find_rule_cfg(rule_id: str) -> dict | None:

@@ -38,7 +38,7 @@ def setup_logging() -> None:
     level_name = str(cfg.get("log_level", "info")).upper()
     level = getattr(logging, level_name, logging.INFO)
 
-    log_path = _resolve_log_path(cfg.get("log_file_path", "logs/wanzi_guizhe.log"))
+    log_path = _resolve_log_path(cfg.get("log_file_path", "logs/ai_cross_check.log"))
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     formatter = logging.Formatter(_FORMAT, datefmt=_DATEFMT)
@@ -78,6 +78,6 @@ def setup_logging() -> None:
     logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     _setup_done = True
-    logging.getLogger("wanzi.boot").info(
+    logging.getLogger("aicheck.boot").info(
         "日志初始化完成 level=%s file=%s pid=%d", level_name, log_path, os.getpid()
     )

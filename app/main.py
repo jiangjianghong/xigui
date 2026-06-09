@@ -25,7 +25,7 @@ from app.core.logging import setup_logging
 
 # 必须最先调用，否则后续模块的 logger 输出可能用默认配置
 setup_logging()
-log = logging.getLogger("wanzi.boot")
+log = logging.getLogger("aicheck.boot")
 
 
 @asynccontextmanager
@@ -48,7 +48,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 
 app = FastAPI(
-    title="皖资规约 - 规则比对引擎",
+    title="AI交叉校验 - 规则比对引擎",
     version="0.1.0",
     description=(
         "投资项目文件合规审核第二阶段:按规则 ID 调用 LLM 比对两个字段,"
