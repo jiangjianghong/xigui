@@ -230,9 +230,21 @@ function addFieldDef() {
 }
 
 function removeFieldDef(i) {
-    // 基础版:仅删行重排;Task 3 会替换为带模板占位符自动调整的版本
     const defs = getFieldDefs();
     if (defs.length <= 1) return;
+
+    const ta = document.getElementById('f-prompt');
+    // 被删字段仍被模板引用 → 提醒(占位符会悬空,需手动清理)
+    const usedRe = new RegExp(`\\{field_${i}(_name)?\\}`);
+    if (usedRe.test(ta.value)) {
+        if (!confirm(`模板仍引用 {field_${i}},删除后该占位符将失效,需手动清理。确认删除吗?`)) return;
+    }
+    // 更大下标自动减一:{field_3} → {field_2}(含 _name 变体)
+    ta.value = ta.value.replace(/\{field_(\d+)(_name)?\}/g, (m, n, suffix) => {
+        n = parseInt(n);
+        return n > i ? `{field_${n - 1}${suffix || ''}}` : m;
+    });
+
     defs.splice(i, 1);
     renderFieldDefRows(defs);
 }
