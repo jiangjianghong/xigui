@@ -2,6 +2,9 @@
 
 每条测试都把 ``rules_config_path`` 临时指向 tmp_path 下的副本,避免污染仓库里
 真实的 ``config/rules.yaml``。
+
+规则数据源是测试自有 fixture(``tests/fixtures/rules.yaml``,固定 R001-R005
+共 5 条),与业务活配置 ``config/rules.yaml`` 解耦——业务侧改活配置不影响测试。
 """
 
 from __future__ import annotations
@@ -20,14 +23,14 @@ from app.rules import llm_rule
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-REAL_RULES = PROJECT_ROOT / "config" / "rules.yaml"
+FIXTURE_RULES = PROJECT_ROOT / "tests" / "fixtures" / "rules.yaml"
 
 
 @pytest.fixture
 def isolated_rules(tmp_path, monkeypatch):
-    """把 rules.yaml 隔离到 tmp_path,测完原文件零变动。"""
+    """把 fixture rules.yaml 拷到 tmp_path 隔离,测完仓库文件零变动。"""
     fake = tmp_path / "rules.yaml"
-    shutil.copy(REAL_RULES, fake)
+    shutil.copy(FIXTURE_RULES, fake)
 
     # 让 _rules_yaml_path / get_rules 都读 fake
     real_get_config = cfg_module.get_config

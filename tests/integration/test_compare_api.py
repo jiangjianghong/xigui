@@ -2,18 +2,44 @@
 
 所有规则都走 LLM,因此所有 /compare 用例都需要 monkeypatch `chat_json`。
 
+规则数据源是测试自有 fixture(``tests/fixtures/rules.yaml``,固定 R001-R005
+共 5 条),与业务活配置 ``config/rules.yaml`` 解耦——业务侧改活配置不影响测试。
+本文件只读规则、不写规则,因此直接指向 fixture 文件,无需拷贝到 tmp_path。
+
 run:  pytest tests/integration/ -v
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.core import config as cfg_module
 from app.rules import llm_rule
 
 client = TestClient(app)
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+FIXTURE_RULES = PROJECT_ROOT / "tests" / "fixtures" / "rules.yaml"
+
+
+@pytest.fixture(autouse=True)
+def isolated_rules(monkeypatch):
+    """让所有用例都从 tests/fixtures/rules.yaml 读规则(只读,不拷贝)。"""
+    real_get_config = cfg_module.get_config
+
+    def _fake_get_config():
+        c = dict(real_get_config())
+        c["rules_config_path"] = str(FIXTURE_RULES)
+        return c
+
+    monkeypatch.setattr(cfg_module, "get_config", _fake_get_config)
+    cfg_module.reload_rules()
+    yield
+    cfg_module.reload_rules()
 
 
 # ---------------------------------------------------------------------------
@@ -26,8 +52,8 @@ def test_health_reports_rules():
     body = resp.json()
     assert body["status"] == "ok"
     assert body["service"] == "ai_cross_check"
-    assert body["rules_loaded"] >= 5
-    assert {"R001", "R002", "R003", "R004", "R005"}.issubset(set(body["rule_ids"]))
+    assert body["rules_loaded"] == 5
+    assert set(body["rule_ids"]) == {"R001", "R002", "R003", "R004", "R005"}
 
 
 # ---------------------------------------------------------------------------
@@ -165,7 +191,7 @@ def test_admin_reload_rules():
     assert resp.status_code == 200
     body = resp.json()
     assert body["status"] == "ok"
-    assert body["rules_loaded"] >= 5
+    assert body["rules_loaded"] == 5
 
 
 # ---------------------------------------------------------------------------
@@ -183,11 +209,21 @@ def test_field_name_optional_for_normal_rule(mock_llm):
     assert resp.json()["result"] is True
 
 
-def test_single_field_compare(mock_llm):
-    """单字段校验场景。"""
+def test_single_field_compare(mock_llm, monkeypatch):
+    """单字段校验场景:注入一条只引用 {field_0} 的规则,fields 只传 1 个元素。"""
+    from app.api import compare as compare_module
+
+    single_rule = {
+        "id": "RSINGLE",
+        "name": "单字段规模数量校验",
+        "require_field_name": False,
+        "prompt_template": "请判断以下建设规模描述是否含明确数量:{field_0}",
+    }
+    monkeypatch.setattr(compare_module, "get_rules", lambda: [single_rule])
+
     mock_llm["content"] = '{"match": true, "reason": "含明确规模数量"}'
     resp = client.post("/compare", json={
-        "rule_id": "cross_rule_08",
+        "rule_id": "RSINGLE",
         "fields": [{"value": "DN500管网5公里，新建"}],
     })
     assert resp.status_code == 200
