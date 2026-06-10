@@ -7,9 +7,7 @@ ARG PYTHON_IMAGE=python:3.12-slim
 FROM ${PYTHON_IMAGE}
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
@@ -29,13 +27,20 @@ RUN if [ -n "$APT_MIRROR" ]; then \
         curl \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements/ /tmp/requirements/
-RUN pip install -r /tmp/requirements/prod.txt
+# 安装 uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
-COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# 先只复制依赖相关文件,利用 Docker 层缓存
+COPY pyproject.toml .python-version ./
+RUN uv sync --no-dev --no-install-project
+
+# 复制全部源码
+COPY . .
+
+# 安装项目本身(不重新安装依赖)
+RUN uv sync --no-dev
 
 EXPOSE 6549
 
-ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+ENTRYPOINT ["uv", "run"]
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6549"]

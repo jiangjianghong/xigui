@@ -21,9 +21,9 @@ _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
 
 # 没有 prompt_template 时的最后兜底,避免崩溃
 _FALLBACK_TEMPLATE = (
-    "请判断以下两个字段在语义上是否一致。\n"
-    "A: {a_value}\n"
-    "B: {b_value}\n"
+    "请判断以下字段在语义上是否一致。\n"
+    "A: {field_0}\n"
+    "B: {field_1}\n"
     '严格输出 JSON: {{"match": true|false, "reason": "<不超过30字>"}}'
 )
 
@@ -48,8 +48,11 @@ def _parse_llm_json(content: str) -> dict[str, Any] | None:
 class LLMRule:
     """通用 LLM 规则。
 
-    构造时接受 ``rules.yaml`` 中的整条规则配置。``compare`` 拿到两个字段值,
+    构造时接受 ``rules.yaml`` 中的整条规则配置。``compare`` 拿到字段列表,
     渲染 prompt 后调用 LLM,返回 ``CompareResult``。
+
+    prompt_template 中使用 ``{field_0}`` ``{field_1}`` ... 按索引引用字段值,
+    ``{field_0_name}`` ``{field_1_name}`` ... 引用字段名。
     """
 
     def __init__(self, cfg: dict[str, Any]):
@@ -61,37 +64,34 @@ class LLMRule:
 
     def _render_user_prompt(
         self,
-        a_value: str,
-        b_value: str,
-        *,
-        a_name: str | None = None,
-        b_name: str | None = None,
+        fields: list[tuple[str, str | None]],
     ) -> str:
-        # 允许 yaml 中写 {a_value} {b_value} {a_name} {b_name}。
-        # name 缺失时占位空串,避免渲染出 "None"——若规则强依赖 name,应在
-        # API 入口已经做过 422 校验,理论上走不到这里。
+        """渲染 prompt_template。
+
+        ``fields`` 为 ``[(value, name), ...]`` 列表。
+        构建 ``{field_0}`` ``{field_0_name}`` ... 等占位符的替换字典。
+        name 缺失时占位空串。
+        """
+        replacements: dict[str, str] = {}
+        for i, (value, name) in enumerate(fields):
+            replacements[f"field_{i}"] = value
+            replacements[f"field_{i}_name"] = name or ""
         try:
-            return self.prompt_template.format(
-                a_value=a_value,
-                b_value=b_value,
-                a_name=a_name or "",
-                b_name=b_name or "",
-            )
+            return self.prompt_template.format(**replacements)
         except (KeyError, IndexError) as e:
             log.warning("prompt_template 渲染失败 rule_id=%s err=%s", self.id, e)
             return self.prompt_template
 
     def compare(
         self,
-        a_value: str,
-        b_value: str,
-        *,
-        a_name: str | None = None,
-        b_name: str | None = None,
+        fields: list[tuple[str, str | None]],
     ) -> CompareResult:
-        user_prompt = self._render_user_prompt(
-            a_value, b_value, a_name=a_name, b_name=b_name,
-        )
+        """执行比对。
+
+        ``fields`` 为 ``[(value, name), ...]`` 列表,
+        与请求中 ``fields`` 数组一一对应。
+        """
+        user_prompt = self._render_user_prompt(fields)
         messages: list[dict[str, Any]] = []
         if self.system_prompt:
             messages.append({"role": "system", "content": self.system_prompt})

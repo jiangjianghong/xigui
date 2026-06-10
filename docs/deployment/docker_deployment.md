@@ -73,8 +73,8 @@ curl http://localhost:6549/health
 # 一次实际比对(会调 LLM,需要 config.yaml 里填了真实 api_key)
 curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
   -d '{"rule_id":"R001",
-       "field_a":{"value":"  2024-001 "},
-       "field_b":{"value":"2024-001"}}'
+       "fields":[{"value":"  2024-001 "},
+                 {"value":"2024-001"}]}'
 
 # 看日志
 tail -f logs/ai_cross_check.log

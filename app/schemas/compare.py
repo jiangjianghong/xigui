@@ -23,12 +23,15 @@ class CompareRequest(BaseModel):
     """``POST /compare`` 请求体。"""
 
     rule_id: str = Field(..., description="规则 ID，对应 config/rules.yaml 中的 id")
-    field_a: FieldInput
-    field_b: FieldInput
+    fields: list[FieldInput] = Field(
+        ...,
+        min_length=1,
+        description="待比对的字段列表，数量由规则的 prompt_template 决定（1~N）",
+    )
 
 
 class Cost(BaseModel):
-    """LLM token 用量。确定性规则全为 0。"""
+    """LLM token 用量。"""
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
@@ -43,3 +46,4 @@ class CompareResponse(BaseModel):
     reason: str = Field(..., description="判断理由（中文）")
     time: int = Field(..., description="本次调用耗时，毫秒")
     cost: Cost = Field(default_factory=Cost)
+    fields: list[FieldInput] = Field(default_factory=list, description="回显传入的字段列表")

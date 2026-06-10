@@ -232,8 +232,8 @@ curl http://localhost:6549/health
 # 跑一次比对(LLM 在线,会消耗少量 token)
 curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
   -d '{"rule_id":"R001",
-       "field_a":{"value":"  2024-001 "},
-       "field_b":{"value":"2024-001"}}'
+       "fields":[{"value":"  2024-001 "},
+                 {"value":"2024-001"}]}'
 
 # 浏览器打开 Web 管理界面
 # http://<target-ip>:6549/ui/

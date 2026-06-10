@@ -82,8 +82,6 @@ function renderRules() {
     }
     empty.classList.add('hidden');
     tbody.innerHTML = RULES.map(r => {
-        const expected = Array.isArray(r.expected_field_names)
-            ? r.expected_field_names.join(' / ') : '—';
         const reqBadge = r.require_field_name
             ? '<span class="badge badge-warning">true</span>'
             : '<span class="badge badge-gray">false</span>';
@@ -93,7 +91,6 @@ function renderRules() {
         return `<tr class="table-row">
             <td><code class="font-mono text-brand-700">${escape(r.id)}</code></td>
             <td>${escape(r.name || '')}</td>
-            <td class="text-surface-500">${escape(expected)}</td>
             <td>${reqBadge}</td>
             <td>${sysBadge}</td>
             <td>
@@ -116,7 +113,7 @@ function openCreate() {
     MODAL_ORIG_ID = null;
     document.getElementById('modal-title').textContent = '新增规则';
     document.getElementById('f-id').disabled = false;
-    fillForm({ id: '', name: '', description: '', expected_field_names: [],
+    fillForm({ id: '', name: '', description: '',
                require_field_name: false, system_prompt: '', prompt_template: '' });
     document.getElementById('rule-modal').classList.remove('hidden');
 }
@@ -139,8 +136,6 @@ function fillForm(r) {
     document.getElementById('f-id').value = r.id || '';
     document.getElementById('f-name').value = r.name || '';
     document.getElementById('f-desc').value = r.description || '';
-    document.getElementById('f-expected').value =
-        Array.isArray(r.expected_field_names) ? r.expected_field_names.join(', ') : '';
     document.getElementById('f-require').value = r.require_field_name ? 'true' : 'false';
     document.getElementById('f-system').value = r.system_prompt || '';
     document.getElementById('f-prompt').value = r.prompt_template || '';
@@ -151,15 +146,10 @@ function closeModal() {
 }
 
 function readForm() {
-    const expectedRaw = document.getElementById('f-expected').value.trim();
-    const expected = expectedRaw
-        ? expectedRaw.split(/[,,]/).map(s => s.trim()).filter(Boolean)
-        : null;
     return {
         id: document.getElementById('f-id').value.trim(),
         name: document.getElementById('f-name').value.trim(),
         description: document.getElementById('f-desc').value.trim(),
-        expected_field_names: expected,
         require_field_name: document.getElementById('f-require').value === 'true',
         system_prompt: document.getElementById('f-system').value,
         prompt_template: document.getElementById('f-prompt').value,
@@ -171,9 +161,9 @@ async function saveRule() {
     if (!payload.id) { toast('id 不能为空', 'error'); return; }
     if (!payload.prompt_template.trim()) { toast('prompt_template 不能为空', 'error'); return; }
 
-    // 友好提示:模板用了 {a_name}/{b_name} 但没勾 require_field_name
-    if (/\{a_name\}|\{b_name\}/.test(payload.prompt_template) && !payload.require_field_name) {
-        if (!confirm('prompt_template 引用了 {a_name} 或 {b_name},但 require_field_name 是 false,LLM 将拿到空字符串。确认继续吗?')) return;
+    // 友好提示:模板用了 {field_N_name} 但没勾 require_field_name
+    if (/\{field_\d+_name\}/.test(payload.prompt_template) && !payload.require_field_name) {
+        if (!confirm('prompt_template 引用了 {field_N_name},但 require_field_name 是 false,LLM 将拿到空字符串。确认继续吗?')) return;
     }
 
     // 编辑模式下 id 改了 = rename,提醒下游缓存风险
@@ -259,45 +249,49 @@ function currentPgRule() {
 function onPgRuleChange() {
     const r = currentPgRule();
     const hint = document.getElementById('pg-rule-hint');
-    const nameBlock = document.getElementById('pg-name-block');
+    const container = document.getElementById('pg-fields-container');
     const preview = document.getElementById('pg-prompt-preview');
     if (!r) {
         hint.textContent = '';
-        nameBlock.classList.add('hidden');
+        container.innerHTML = '';
         preview.textContent = '(选规则后展示)';
         return;
     }
     hint.innerHTML = `<span class="badge badge-info">${r.require_field_name ? 'name 必填' : 'name 可省'}</span>
         <span class="text-surface-500 ml-1">${escape(r.description || '')}</span>`;
-    nameBlock.classList.toggle('hidden', !r.require_field_name);
     preview.textContent = r.prompt_template || '(空)';
-}
 
-function loadPgSample() {
-    const r = currentPgRule();
-    if (!r) { toast('请先选规则', 'info'); return; }
-    if (Array.isArray(r.expected_field_names) && r.expected_field_names.length >= 2) {
-        document.getElementById('pg-a-name').value = r.expected_field_names[0];
-        document.getElementById('pg-b-name').value = r.expected_field_names[1];
-    }
+    // 从 prompt_template 推断字段数量
+    const matches = r.prompt_template.match(/\{field_\d+\}/g);
+    const count = matches ? Math.max(...matches.map(m => parseInt(m.match(/\d+/)[0])) + 1) : 2;
+    container.innerHTML = Array.from({length: count}, (_, i) => `
+        <div class="card p-3">
+            <label class="field-label"><span class="name">fields[${i}]</span>${r.require_field_name ? '<span class="required">*</span>' : ''}</label>
+            ${r.require_field_name ? `<input class="input pg-field-name mb-2" data-idx="${i}" placeholder="字段名">` : ''}
+            <textarea class="input pg-field-value" data-idx="${i}" rows="2" placeholder="字段 ${i} 的值"></textarea>
+        </div>
+    `).join('');
 }
 
 async function runPlayground() {
     const r = currentPgRule();
     if (!r) { toast('请先选规则', 'error'); return; }
-    const av = document.getElementById('pg-a-value').value;
-    const bv = document.getElementById('pg-b-value').value;
-    if (!av || !bv) { toast('field_a.value / field_b.value 都要填', 'error'); return; }
 
-    const payload = {
-        rule_id: r.id,
-        field_a: { value: av },
-        field_b: { value: bv },
-    };
-    if (r.require_field_name) {
-        payload.field_a.name = document.getElementById('pg-a-name').value;
-        payload.field_b.name = document.getElementById('pg-b-name').value;
+    const valueEls = document.querySelectorAll('.pg-field-value');
+    const fields = [];
+    for (const el of valueEls) {
+        const idx = parseInt(el.dataset.idx);
+        const value = el.value.trim();
+        if (!value) { toast(`fields[${idx}].value 不能为空`, 'error'); return; }
+        const entry = { value };
+        if (r.require_field_name) {
+            const nameEl = document.querySelector(`.pg-field-name[data-idx="${idx}"]`);
+            entry.name = nameEl ? nameEl.value.trim() : '';
+        }
+        fields.push(entry);
     }
+
+    const payload = { rule_id: r.id, fields };
 
     const placeholder = document.getElementById('pg-result-placeholder');
     const box = document.getElementById('pg-result-box');

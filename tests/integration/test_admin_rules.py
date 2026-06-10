@@ -70,7 +70,7 @@ def test_get_single_rule(client, isolated_rules):
     body = resp.json()
     assert body["id"] == "R004"
     assert body["require_field_name"] is True
-    assert "{a_name}" in body["prompt_template"]
+    assert "{field_0_name}" in body["prompt_template"]
 
 
 def test_get_unknown_rule_returns_404(client, isolated_rules):
@@ -86,10 +86,9 @@ NEW_RULE = {
     "id": "R999",
     "name": "测试规则",
     "description": "集成测试用",
-    "expected_field_names": ["X", "Y"],
     "require_field_name": False,
     "system_prompt": "你是测试专家。",
-    "prompt_template": "A:{a_value} B:{b_value} JSON:{{\"match\":true,\"reason\":\"\"}}",
+    "prompt_template": "A:{field_0} B:{field_1} JSON:{{\"match\":true,\"reason\":\"\"}}",
 }
 
 
@@ -130,7 +129,7 @@ def test_create_missing_prompt_template_returns_422(client, isolated_rules):
 
 def test_update_rule(client, isolated_rules):
     payload = dict(NEW_RULE, id="R001", name="改后名字",
-                   prompt_template="新模板 A:{a_value} B:{b_value}")
+                   prompt_template="新模板 A:{field_0} B:{field_1}")
     resp = client.put("/admin/rules/R001", json=payload)
     assert resp.status_code == 200
     assert resp.json()["rule_id"] == "R001"
@@ -225,8 +224,7 @@ def test_create_then_compare_uses_new_rule(client, isolated_rules, monkeypatch):
     # 比对
     resp = client.post("/compare", json={
         "rule_id": "R999",
-        "field_a": {"value": "v1"},
-        "field_b": {"value": "v2"},
+        "fields": [{"value": "v1"}, {"value": "v2"}],
     })
     assert resp.status_code == 200
     assert resp.json()["result"] is True

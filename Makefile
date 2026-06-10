@@ -1,4 +1,4 @@
-.PHONY: help build up down restart logs sh test lint package-offline
+.PHONY: help build up down restart logs sh test lint package-offline dev sync
 
 # 容器运行时命令。默认 docker,可在调用时覆盖:
 #   make up                            # 用 docker
@@ -23,6 +23,8 @@ BUILD_ARGS = $(if $(PYTHON_IMAGE),--build-arg PYTHON_IMAGE=$(PYTHON_IMAGE)) \
 
 help:
 	@echo "Available targets (CONTAINER_CMD=$(CONTAINER_CMD), PYTHON_IMAGE=$(PYTHON_IMAGE), APT_MIRROR=$(APT_MIRROR)):"
+	@echo "  dev              Install all dependencies (including dev) via uv"
+	@echo "  sync             Install production dependencies via uv"
 	@echo "  build            Build the container image"
 	@echo "  up               Start the stack (detached)"
 	@echo "  down             Stop and remove containers"
@@ -36,6 +38,12 @@ help:
 	@echo "Override runtime: make <target> CONTAINER_CMD=nerdctl"
 	@echo "Override base image: make build PYTHON_IMAGE=docker.m.daocloud.io/library/python:3.12-slim"
 	@echo "Override apt mirror: make build APT_MIRROR=mirrors.aliyun.com"
+
+dev:
+	uv sync --dev
+
+sync:
+	uv sync
 
 build:
 	$(CONTAINER_CMD) compose build $(BUILD_ARGS)

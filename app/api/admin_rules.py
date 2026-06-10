@@ -40,13 +40,9 @@ class RuleIn(BaseModel):
     id: str = Field(..., min_length=1, description="规则唯一编号(如 R001),建议三位数字")
     name: str | None = Field(default="", description="中文规则名(用于日志/展示)")
     description: str | None = Field(default="", description="规则描述,仅文档用")
-    expected_field_names: list[str] | None = Field(
-        default=None,
-        description="预期的两个字段名,仅文档化不强校验",
-    )
     require_field_name: bool = Field(
         default=False,
-        description="是否要求请求里 field_a.name / field_b.name 必填",
+        description="是否要求请求里每个 field.name 都必填",
     )
     system_prompt: str | None = Field(
         default="",
@@ -54,7 +50,7 @@ class RuleIn(BaseModel):
     )
     prompt_template: str = Field(
         ..., min_length=1,
-        description="prompt 模板,支持占位符 {a_value}/{b_value}/{a_name}/{b_name}",
+        description="prompt 模板,支持占位符 {field_0}/{field_1}/.../{field_0_name}/...",
     )
 
 

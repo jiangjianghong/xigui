@@ -111,7 +111,6 @@
                             <tr>
                                 <th>ID</th>
                                 <th>规则名</th>
-                                <th>预期字段</th>
                                 <th>name 必填</th>
                                 <th>system_prompt</th>
                                 <th>操作</th>
@@ -132,38 +131,17 @@
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
                 <div class="card p-5">
                     <h2 class="text-base font-semibold text-surface-900 mb-1">输入</h2>
-                    <p class="text-sm text-surface-500 mb-4">选规则、填两个字段值,点"试跑"调一次真实的 <code>/compare</code>。</p>
+                    <p class="text-sm text-surface-500 mb-4">选规则、填字段值,点"试跑"调一次真实的 <code>/compare</code>。</p>
 
                     <label class="field-label"><span class="name">规则</span></label>
                     <select id="pg-rule" class="input" onchange="onPgRuleChange()"></select>
                     <p id="pg-rule-hint" class="field-help mt-2"></p>
 
-                    <div id="pg-name-block" class="hidden mt-4 grid grid-cols-2 gap-3">
-                        <div>
-                            <label class="field-label"><span class="name">field_a.name</span><span class="required">*</span></label>
-                            <input id="pg-a-name" class="input" placeholder="例:建设单位">
-                        </div>
-                        <div>
-                            <label class="field-label"><span class="name">field_b.name</span><span class="required">*</span></label>
-                            <input id="pg-b-name" class="input" placeholder="例:建设单位">
-                        </div>
-                    </div>
-
-                    <div class="mt-4">
-                        <label class="field-label"><span class="name">field_a.value</span><span class="required">*</span></label>
-                        <textarea id="pg-a-value" class="input" rows="3" placeholder="字段 A 的值"></textarea>
-                    </div>
-                    <div class="mt-3">
-                        <label class="field-label"><span class="name">field_b.value</span><span class="required">*</span></label>
-                        <textarea id="pg-b-value" class="input" rows="3" placeholder="字段 B 的值"></textarea>
-                    </div>
+                    <div id="pg-fields-container" class="mt-4 space-y-3"></div>
 
                     <div class="mt-5 flex gap-2">
                         <button class="btn-primary" onclick="runPlayground()">
                             <i class="ri-play-line mr-1"></i> 试跑
-                        </button>
-                        <button class="btn-outline" onclick="loadPgSample()" title="按当前规则的 expected_field_names 填示例 name">
-                            <i class="ri-magic-line mr-1"></i> 填示例 name
                         </button>
                     </div>
                 </div>
@@ -215,17 +193,10 @@
                     <input id="f-desc" class="input" placeholder="判断两个建设地点描述是否指向同一位置">
                 </div>
 
-                <!-- expected_field_names -->
-                <div>
-                    <div class="field-label"><span class="name">expected_field_names</span></div>
-                    <p class="field-help">预期的两个字段名(用英文逗号分隔),仅文档化、不做强校验,与第一阶段 VLM 抽取的字段名保持一致即可。</p>
-                    <input id="f-expected" class="input" placeholder="建设地点, 建设地点">
-                </div>
-
                 <!-- require_field_name -->
                 <div>
                     <div class="field-label"><span class="name">require_field_name</span></div>
-                    <p class="field-help">是否要求请求里 <code>field_a.name</code> / <code>field_b.name</code> 必填。<b>若 prompt_template 引用了 {a_name}/{b_name},务必勾选 true</b>;否则 LLM 拿到空字符串,判定不准。</p>
+                    <p class="field-help">是否要求请求里每个 <code>field.name</code> 都必填。<b>若 prompt_template 引用了 {field_N_name},务必勾选 true</b>;否则 LLM 拿到空字符串,判定不准。</p>
                     <select id="f-require" class="input">
                         <option value="false">false — 不校验 name</option>
                         <option value="true">true — 缺 name 直接返 422</option>
@@ -242,15 +213,16 @@
                 <!-- prompt_template -->
                 <div>
                     <div class="field-label"><span class="name">prompt_template</span><span class="required">*</span></div>
-                    <p class="field-help">规则的核心,用自然语言描述判定标准。支持占位符 <code>{a_value}</code> <code>{b_value}</code> <code>{a_name}</code> <code>{b_name}</code>。<b>JSON 示例里的大括号要写双重 {{ }}</b>,否则 .format 会报错。</p>
+                    <p class="field-help">规则的核心,用自然语言描述判定标准。支持占位符 <code>{field_0}</code> <code>{field_1}</code> ... <code>{field_0_name}</code> ... 按索引引用。<b>JSON 示例里的大括号要写双重 {{ }}</b>,否则 .format 会报错。</p>
                     <div class="mb-2">
-                        <span class="chip" onclick="insertPlaceholder('{a_value}')">{a_value}</span>
-                        <span class="chip" onclick="insertPlaceholder('{b_value}')">{b_value}</span>
-                        <span class="chip" onclick="insertPlaceholder('{a_name}')">{a_name}</span>
-                        <span class="chip" onclick="insertPlaceholder('{b_name}')">{b_name}</span>
+                        <span class="chip" onclick="insertPlaceholder('{field_0}')">{field_0}</span>
+                        <span class="chip" onclick="insertPlaceholder('{field_1}')">{field_1}</span>
+                        <span class="chip" onclick="insertPlaceholder('{field_2}')">{field_2}</span>
+                        <span class="chip" onclick="insertPlaceholder('{field_0_name}')">{field_0_name}</span>
+                        <span class="chip" onclick="insertPlaceholder('{field_1_name}')">{field_1_name}</span>
                         <span class="chip" onclick="insertPlaceholder('{{\"match\": true|false, \"reason\": \"<不超过30字>\"}}')">JSON 输出范式</span>
                     </div>
-                    <textarea id="f-prompt" class="input" rows="10" placeholder="请判断 A 与 B 是否...&#10;A: {a_value}&#10;B: {b_value}&#10;严格按 JSON 输出: {{&quot;match&quot;: true|false, &quot;reason&quot;: &quot;...&quot;}}"></textarea>
+                    <textarea id="f-prompt" class="input" rows="10" placeholder="请判断以下字段是否一致...&#10;A: {field_0}&#10;B: {field_1}&#10;严格按 JSON 输出: {{&quot;match&quot;: true|false, &quot;reason&quot;: &quot;...&quot;}}"></textarea>
                 </div>
             </div>
 

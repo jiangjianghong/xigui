@@ -71,15 +71,14 @@ UI 保存时会**保留 `rules.yaml` 顶部的字段说明注释和字段顺序*
 - id: "R006"
   name: "项目名称基本一致"
   description: "判断两个项目名称是否指向同一项目"
-  expected_field_names: ["项目名称", "项目名称"]
   require_field_name: false
   system_prompt: "你是熟悉政府投资项目文件比对的合规审核员,擅长项目名称的字面与语义一致性判定。"
   prompt_template: |
     判断两个"项目名称"是否指向同一项目。
     允许差异:措辞微调、空白、标点。
     不允许差异:关键字差异(如"道路改造"与"道路新建")。
-    A: {a_value}
-    B: {b_value}
+    A: {field_0}
+    B: {field_1}
     严格输出 JSON: {{"match": true|false, "reason": "<不超过30字>"}}
 ```
 
@@ -88,7 +87,7 @@ UI 保存时会**保留 `rules.yaml` 顶部的字段说明注释和字段顺序*
 ```bash
 curl -X POST http://localhost:6549/admin/reload-rules
 curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
-  -d '{"rule_id":"R006","field_a":{"value":"X 项目"},"field_b":{"value":"X项目"}}'
+  -d '{"rule_id":"R006","fields":[{"value":"X 项目"},{"value":"X项目"}]}'
 ```
 
 prompt 编写要点见 [`docs/api/rules.md §4`](../api/rules.md)。

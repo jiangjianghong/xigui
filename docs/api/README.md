@@ -38,25 +38,33 @@
 
 - 方法：`POST`
 - 路径：`/compare`
-- 描述：根据 `rule_id` 对两个字段做比对，返回布尔结果 + 中文理由 + 耗时 + token 成本。
+- 描述：根据 `rule_id` 对一个或多个字段做比对，返回布尔结果 + 中文理由 + 耗时 + token 成本。
 
 请求体：
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `rule_id` | string | 是 | 规则 ID，对应 `config/rules.yaml` 中的 `id` |
-| `field_a` | object | 是 | 字段 A，含 `name`（可选）和 `value`（必填） |
-| `field_b` | object | 是 | 字段 B，结构同上 |
-| `field_x.value` | string | 是 | 字段的文本值 |
-| `field_x.name` | string | **看规则** | 字段名。**默认可省略**;若规则配了 `require_field_name: true`,缺则 422 |
+| `fields` | array | 是 | 字段列表（1~N 个），每个元素含 `name`（可选）和 `value`（必填） |
+| `fields[].value` | string | 是 | 字段的文本值 |
+| `fields[].name` | string | **看规则** | 字段名。**默认可省略**;若规则配了 `require_field_name: true`,缺则 422 |
 
-请求示例(name 可省略,等价于完整写法):
+请求示例：
 
 ```json
+// 单字段校验
 {
-  "rule_id": "R001",
-  "field_a": {"value": "  2024-001 "},
-  "field_b": {"value": "2024-001"}
+  "rule_id": "cross_rule_08",
+  "fields": [{"value": "DN500管网5公里，新建"}]
+}
+
+// 两字段交叉
+{
+  "rule_id": "cross_rule_01",
+  "fields": [
+    {"name": "总投资", "value": "1.2亿"},
+    {"name": "总投资金额", "value": "12000万元"}
+  ]
 }
 ```
 
@@ -71,53 +79,47 @@
 | `cost.prompt_tokens` | int | LLM 输入 token |
 | `cost.completion_tokens` | int | LLM 输出 token |
 | `cost.total_tokens` | int | 总 token |
+| `fields` | array | 回显传入的字段列表 |
 
 响应示例：
 
 ```json
 {
-  "rule_id": "R001",
+  "rule_id": "cross_rule_01",
   "result": true,
-  "reason": "两个项目代码一致",
-  "time": 312,
-  "cost": {"prompt_tokens": 156, "completion_tokens": 12, "total_tokens": 168}
+  "reason": "1.2亿等于12000万元",
+  "time": 1520,
+  "cost": {"prompt_tokens": 156, "completion_tokens": 12, "total_tokens": 168},
+  "fields": [
+    {"name": "总投资", "value": "1.2亿"},
+    {"name": "总投资金额", "value": "12000万元"}
+  ]
 }
 ```
 
-#### 五条规则 curl 示例
+#### curl 示例
 
-> 所有规则均走 LLM,判定边界由 `config/rules.yaml` 中各自的 `prompt_template` 描述,详见 [`rules.md`](rules.md)。
+> 所有规则均走 LLM,判定边界由 `config/rules.yaml` 中各自的 `prompt_template` 描述。
+> prompt 中使用 `{field_0}` `{field_1}` ... 按索引引用字段值,`{field_0_name}` ... 引用字段名。
 
 ```bash
-# R001 项目代码完全一致
+# 单字段校验
 curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
-  -d '{"rule_id":"R001",
-       "field_a":{"name":"项目代码","value":"  ABC-001 "},
-       "field_b":{"name":"项目代码","value":"abc-001"}}'
+  -d '{"rule_id":"cross_rule_08",
+       "fields":[{"value":"DN500管网5公里，新建"}]}'
 
-# R002 总投资金额一致
+# 两字段交叉
 curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
-  -d '{"rule_id":"R002",
-       "field_a":{"name":"总投资","value":"1.2亿"},
-       "field_b":{"name":"总投资金额","value":"12000万元"}}'
+  -d '{"rule_id":"cross_rule_01",
+       "fields":[{"name":"总投资","value":"1.2亿"},
+                 {"name":"总投资金额","value":"12000万元"}]}'
 
-# R003 批复时间早于申报时间
+# 三字段交叉（示例）
 curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
-  -d '{"rule_id":"R003",
-       "field_a":{"name":"批复时间","value":"2024年1月10日"},
-       "field_b":{"name":"申报时间","value":"2024-02-01"}}'
-
-# R004 建设单位名称基本一致(必须传 name,因 prompt 用了 {a_name}/{b_name})
-curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
-  -d '{"rule_id":"R004",
-       "field_a":{"name":"建设单位","value":"贵州省XX建设有限公司"},
-       "field_b":{"name":"建设单位","value":"XX建设公司"}}'
-
-# R005 建设内容详情完全一致
-curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
-  -d '{"rule_id":"R005",
-       "field_a":{"name":"建设内容","value":"机房;光纤;UPS"},
-       "field_b":{"name":"建设内容","value":"光纤、UPS、机房"}}'
+  -d '{"rule_id":"some_rule",
+       "fields":[{"name":"申报表","value":"500万"},
+                 {"name":"批复","value":"500万"},
+                 {"name":"承诺函","value":"500万"}]}'
 ```
 
 #### 错误码
@@ -127,7 +129,7 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
 | 200 | 比对成功(无论 true / false) | `CompareResponse` |
 | 200 | LLM 输出非合法 JSON | `result: false, reason: "LLM 输出非法 JSON"` |
 | 422 | 请求参数 schema 校验失败(如 value 缺失) | FastAPI 默认 |
-| 422 | 规则要求 name 必填但缺失 | `{"detail":"rule R00X 要求 field_a.name 必填"}` |
+| 422 | 规则要求 name 必填但缺失 | `{"detail":"rule R00X 要求 fields[0].name 必填"}` |
 | 404 | `rule_id` 不存在 | `{"detail":"rule_id 不存在: Rxxx"}` |
 | 500 | rules.yaml 配置错误 / 其他未捕获异常 | `{"detail":"..."}` |
 | 502 | LLM 上游错误(鉴权/网络) | `{"detail":"LLM 上游错误: ..."}` |

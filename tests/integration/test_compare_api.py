@@ -37,8 +37,7 @@ def test_health_reports_rules():
 def test_unknown_rule_id_returns_404():
     resp = client.post("/compare", json={
         "rule_id": "RXXX",
-        "field_a": {"name": "x", "value": "1"},
-        "field_b": {"name": "x", "value": "1"},
+        "fields": [{"name": "x", "value": "1"}, {"name": "x", "value": "1"}],
     })
     assert resp.status_code == 404
     assert "rule_id 不存在" in resp.json()["detail"]
@@ -71,8 +70,10 @@ def test_R001_returns_true_when_llm_says_match(mock_llm):
     mock_llm["content"] = '{"match": true, "reason": "项目代码一致"}'
     resp = client.post("/compare", json={
         "rule_id": "R001",
-        "field_a": {"name": "项目代码", "value": "  2024-001 "},
-        "field_b": {"name": "项目代码", "value": "2024-001"},
+        "fields": [
+            {"name": "项目代码", "value": "  2024-001 "},
+            {"name": "项目代码", "value": "2024-001"},
+        ],
     })
     body = resp.json()
     assert resp.status_code == 200
@@ -80,14 +81,17 @@ def test_R001_returns_true_when_llm_says_match(mock_llm):
     assert body["result"] is True
     assert body["cost"]["total_tokens"] == 108
     assert body["time"] >= 0
+    assert len(body["fields"]) == 2
 
 
 def test_R001_returns_false_when_llm_says_no_match(mock_llm):
     mock_llm["content"] = '{"match": false, "reason": "编号不同"}'
     resp = client.post("/compare", json={
         "rule_id": "R001",
-        "field_a": {"name": "项目代码", "value": "2024-001"},
-        "field_b": {"name": "项目代码", "value": "2024-002"},
+        "fields": [
+            {"name": "项目代码", "value": "2024-001"},
+            {"name": "项目代码", "value": "2024-002"},
+        ],
     })
     body = resp.json()
     assert resp.status_code == 200
@@ -99,8 +103,10 @@ def test_R002_numeric_unit_conversion(mock_llm):
     mock_llm["content"] = '{"match": true, "reason": "1.2亿 = 12000万元"}'
     resp = client.post("/compare", json={
         "rule_id": "R002",
-        "field_a": {"name": "总投资", "value": "1.2亿"},
-        "field_b": {"name": "总投资金额", "value": "12000万元"},
+        "fields": [
+            {"name": "总投资", "value": "1.2亿"},
+            {"name": "总投资金额", "value": "12000万元"},
+        ],
     })
     body = resp.json()
     assert resp.status_code == 200
@@ -111,8 +117,10 @@ def test_R003_time_order_pass(mock_llm):
     mock_llm["content"] = '{"match": true, "reason": "1月10日早于2月1日"}'
     resp = client.post("/compare", json={
         "rule_id": "R003",
-        "field_a": {"name": "批复时间", "value": "2024年1月10日"},
-        "field_b": {"name": "申报时间", "value": "2024-02-01"},
+        "fields": [
+            {"name": "批复时间", "value": "2024年1月10日"},
+            {"name": "申报时间", "value": "2024-02-01"},
+        ],
     })
     assert resp.json()["result"] is True
 
@@ -121,8 +129,10 @@ def test_R004_semantic_similar_pass(mock_llm):
     mock_llm["content"] = '{"match": true, "reason": "简称与全称指向同一主体"}'
     resp = client.post("/compare", json={
         "rule_id": "R004",
-        "field_a": {"name": "建设单位", "value": "贵州省XX建设有限公司"},
-        "field_b": {"name": "建设单位", "value": "XX建设公司"},
+        "fields": [
+            {"name": "建设单位", "value": "贵州省XX建设有限公司"},
+            {"name": "建设单位", "value": "XX建设公司"},
+        ],
     })
     body = resp.json()
     assert resp.status_code == 200
@@ -135,8 +145,10 @@ def test_R005_invalid_json_returns_false(mock_llm):
     mock_llm["content"] = "我觉得这两段内容基本一致。"
     resp = client.post("/compare", json={
         "rule_id": "R005",
-        "field_a": {"name": "建设内容", "value": "a; b; c"},
-        "field_b": {"name": "建设内容", "value": "a; b; c; d"},
+        "fields": [
+            {"name": "建设内容", "value": "a; b; c"},
+            {"name": "建设内容", "value": "a; b; c; d"},
+        ],
     })
     body = resp.json()
     assert resp.status_code == 200
@@ -161,12 +173,22 @@ def test_admin_reload_rules():
 # ---------------------------------------------------------------------------
 
 def test_field_name_optional_for_normal_rule(mock_llm):
-    """R001 既没显式 require_field_name 也不引用 {a_name},name 可省略。"""
+    """R001 没显式 require_field_name,name 可省略。"""
     mock_llm["content"] = '{"match": true, "reason": "一致"}'
     resp = client.post("/compare", json={
         "rule_id": "R001",
-        "field_a": {"value": "  2024-001 "},
-        "field_b": {"value": "2024-001"},
+        "fields": [{"value": "  2024-001 "}, {"value": "2024-001"}],
+    })
+    assert resp.status_code == 200
+    assert resp.json()["result"] is True
+
+
+def test_single_field_compare(mock_llm):
+    """单字段校验场景。"""
+    mock_llm["content"] = '{"match": true, "reason": "含明确规模数量"}'
+    resp = client.post("/compare", json={
+        "rule_id": "cross_rule_08",
+        "fields": [{"value": "DN500管网5公里，新建"}],
     })
     assert resp.status_code == 200
     assert resp.json()["result"] is True
@@ -180,30 +202,31 @@ def test_require_field_name_explicit_missing_returns_422(monkeypatch):
         "id": "RTEST",
         "name": "test",
         "require_field_name": True,
-        "prompt_template": "A: {a_value} B: {b_value}",
+        "prompt_template": "A: {field_0} B: {field_1}",
     }
     monkeypatch.setattr(compare_module, "get_rules", lambda: [fake_rule])
 
     resp = client.post("/compare", json={
         "rule_id": "RTEST",
-        "field_a": {"value": "x"},
-        "field_b": {"value": "x"},
+        "fields": [{"value": "x"}, {"value": "x"}],
     })
     assert resp.status_code == 422
     detail = resp.json()["detail"]
-    assert "field_a.name" in detail
-    assert "field_b.name" in detail
+    assert "fields[0].name" in detail
+    assert "fields[1].name" in detail
 
 
 def test_require_field_name_R004_missing_returns_422(mock_llm):
     """R004 yaml 显式 require_field_name: true,缺 name 应 422。"""
     resp = client.post("/compare", json={
         "rule_id": "R004",
-        "field_a": {"value": "贵州省XX建设有限公司"},
-        "field_b": {"value": "XX建设公司"},
+        "fields": [
+            {"value": "贵州省XX建设有限公司"},
+            {"value": "XX建设公司"},
+        ],
     })
     assert resp.status_code == 422
-    assert "field_a.name" in resp.json()["detail"]
+    assert "fields[0].name" in resp.json()["detail"]
 
 
 def test_require_field_name_R004_with_name_passes(monkeypatch):
@@ -220,8 +243,10 @@ def test_require_field_name_R004_with_name_passes(monkeypatch):
 
     resp = client.post("/compare", json={
         "rule_id": "R004",
-        "field_a": {"name": "建设单位", "value": "贵州省XX建设有限公司"},
-        "field_b": {"name": "建设单位", "value": "XX建设公司"},
+        "fields": [
+            {"name": "建设单位", "value": "贵州省XX建设有限公司"},
+            {"name": "建设单位", "value": "XX建设公司"},
+        ],
     })
     assert resp.status_code == 200
     assert resp.json()["result"] is True

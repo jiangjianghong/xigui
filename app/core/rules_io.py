@@ -79,18 +79,14 @@ def normalize_rule(cfg: dict[str, Any]) -> Any:
     out = CommentedMap()
     # 固定字段顺序,与现有 yaml 视觉一致
     order = [
-        "id", "name", "description", "expected_field_names",
+        "id", "name", "description",
         "require_field_name", "system_prompt", "prompt_template",
     ]
     for key in order:
         if key not in cfg:
             continue
         val = cfg[key]
-        if key == "expected_field_names" and isinstance(val, list):
-            seq = CommentedSeq(val)
-            seq.fa.set_flow_style()  # 单行 [a, b] 写法
-            out[key] = seq
-        elif key in ("prompt_template", "system_prompt") and isinstance(val, str) and "\n" in val:
+        if key in ("prompt_template", "system_prompt") and isinstance(val, str) and "\n" in val:
             out[key] = LiteralScalarString(val)
         else:
             out[key] = val

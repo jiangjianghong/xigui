@@ -4,17 +4,16 @@
 #   id                     规则唯一标识(上游传入的 rule_id)
 #   name                   规则名称(仅用于日志/文档)
 #   description            规则描述(仅用于日志/文档)
-#   expected_field_names   预期的两个字段名(仅文档化,不做强校验)
-#   require_field_name     bool。是否要求请求里 field_a.name / field_b.name 必填。
+#   require_field_name     bool。是否要求请求里每个 field.name 都必填。
 #                          - true:  缺 name 直接返 422
 #                          - false: 不校验
 #                          (建议每条规则都显式写出来,不依赖默认值)
 #   system_prompt          LLM 的系统提示。建议每条规则按自身领域显式声明;
 #                          留空(空字符串)则不向模型发送 system 消息。
 #   prompt_template        Prompt 模板。所有规则的判定标准都由这里描述。
-#                          支持占位符:
-#                            {a_value} {b_value}   字段值(必有)
-#                            {a_name}  {b_name}    字段名(用了会触发 require_field_name)
+#                          支持占位符(按请求中 fields 数组的索引):
+#                            {field_0} {field_1} {field_2} ...   字段值
+#                            {field_0_name} {field_1_name} ...   字段名
 #                          注意:JSON 示例里的大括号要写成双重 {{ }},否则 .format 会报错。
 #
 # 设计原则:本服务所有规则都走 LLM,不再有"确定性 vs 语义"之分。所有边界条件
@@ -29,7 +28,6 @@ rules:
   - id: cross_rule_01
     name: 总投资金额一致
     description: 判断两个总投资金额是否数值相等(允许单位差异)
-    expected_field_names: [总投资, 总投资金额]
     require_field_name: false
     system_prompt: 你是熟悉政府投资项目财务管理的注册会计师,擅长金额单位换算(亿/万/元)与一致性核对,输出严格遵守约定格式。
     prompt_template: |
@@ -40,33 +38,31 @@ rules:
       不允许差异:数值有任何实际差异(即使 0.01 元)。如无法可靠换算到统一单位,
       判为不一致。
 
-      A: {a_value}
-      B: {b_value}
+      A: {field_0}
+      B: {field_1}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由,需说明换算后的金额>"}}
   - id: cross_rule_02
     name: 项目名称是否一致
     description: 容忍简称/全称/前后缀差异;把字段名注入 prompt,让 LLM 知道在判什么
-    expected_field_names: [项目名称, 项目名称]
     require_field_name: false
     system_prompt: 你是熟悉企业法人主体识别的合规审核员,能区分简称、全称、行政区划前缀、母公司与分支机构,输出严格遵守约定格式。
     prompt_template: |
-      请判断字段"{a_name}"与字段"{b_name}"的两个值是否指向同一个法人主体。
+      请判断字段"{field_0_name}"与字段"{field_1_name}"的两个值是否指向同一个法人主体。
 
       允许差异:简称与全称、有/无行政区划前缀、"有限公司"与"有限责任公司"互换、
       集团/分公司层级差异(如"XX集团" 与 "XX集团北京分公司"视为不同主体)。
       不允许差异:名称中关键字明显不同(如"中铁"与"中建")。
 
-      A ({a_name}): {a_value}
-      B ({b_name}): {b_value}
+      A ({field_0_name}): {field_0}
+      B ({field_1_name}): {field_1}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
   - id: cross_rule_03
     name: 建设内容详情基本
     description: 语义基本
-    expected_field_names: [建设内容, 建设内容]
     require_field_name: false
     system_prompt: 你是熟悉工程项目建设内容描述的合规审核员,擅长把两段自然语言列表对齐后比较子项目增减与规格差异,输出严格遵守约定格式。
     prompt_template: |
@@ -76,68 +72,63 @@ rules:
       与"道路建设:5km")。
       不允许差异:内容有较大差异,或子项目的数量/规格/面积有差异。
 
-      A: {a_value}
-      B: {b_value}
+      A: {field_0}
+      B: {field_1}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过50字的中文理由,需点明差异项(如有)>"}}
   - id: cross_rule_04
     name: 所属投向领域是否一致
     description: 项目申报表的所属投向领域（三级）和可研的主要建设内容的方向是否一致
-    expected_field_names: [table_suoshu3, table_jianshe_content]
     require_field_name: false
     system_prompt: |-
       你是一个所属投向领域判断专家，和一致性校验专家
       我会给你一个关于建设内容的描述 以及所属投向领域的内容  你需要判断建设内容是否符合所属投向领域 一般方向包括供水方向、排水方向、燃气方向
     prompt_template: |-
-      所属投向领域：{a_value}
-      建设内容描述：{b_value}
+      所属投向领域：{field_0}
+      建设内容描述：{field_1}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
   - id: cross_rule_05
     name: 项目代码是否一致
     description: 项目代码是否一致
-    expected_field_names: [table_project_code, keyan_project_code]
     require_field_name: false
     system_prompt: 你需要判断我给你提供的项目代码是否一致 ，空格符号等微小差异可忽略
     prompt_template: |-
-      A:{a_value}
-      B:{b_value}
+      A:{field_0}
+      B:{field_1}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
   - id: cross_rule_06
     name: 项目单位是否一致
     description: 项目申报表的项目单位 和可研的项目单位是否一致
-    expected_field_names: [table_jianshe_danwei, keyan_jianshedanwei]
     require_field_name: false
     system_prompt: 你是一个文本一致性对比专家
     prompt_template: |-
       你需要判断我给你提供的两个项目是否基本一致，可以有描述差异，只要基本一致就行
-      A:{a_value}
-      B:{b_value}
+      A:{field_0}
+      B:{field_1}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
   - id: cross_rule_07
     name: 属于超长期特别国债支持范围的投资的一致性
     description: 项目申报表中“项目总投资中属于超长期特别国债支持范围的投资”与剔除情况说明中的符合超长期特别国债支持范围投资是否一致
-    expected_field_names: [F_zongtouzi_table_tichu, table_F_zongtouzi]
     require_field_name: false
     system_prompt: 你是一个金额对比专家
     prompt_template: |-
       请判断项目申报表中“项目总投资中属于超长期特别国债支持范围的投资”是否小于等于剔除情况说明中的投资，如果是返回true,否则返回false
 
-      项目申报表：{a_value}
-      剔除情况说明：{b_value}
+      项目申报表：{field_0}
+      剔除情况说明：{field_1}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
   - id: cross_rule_08
     name: 建设内容应含有明确的规模数量
     description: 项目申报表和初步设计（或可行性研究报告）建设内容应含有明确的规模数量且明确是改造或新建
-    expected_field_names: [table_jianshe_content, sub_keyan_chushe]
     require_field_name: false
     system_prompt: 你是一个描述校验专家
     prompt_template: |-
@@ -145,50 +136,47 @@ rules:
 
       A申报表必须有，没有就不明确，B,初步设计（或可行性研究报告）中有一项有就视为明确，当AB两项都明确时返回true，否则返回false
 
-      A申报表:{a_value}
-      B初步设计（或可行性研究报告）:{b_value}
+      A申报表:{field_0}
+      B初步设计（或可行性研究报告）:{field_1}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
   - id: cross_rule_09
     name: 地方财政资金一致性
     description: 项目申报表中地方财政资金和资金承诺函附件的地方财政资金是否一致
-    expected_field_names: [table_difang, zijin_difang]
     require_field_name: false
     system_prompt: 你是一个资金对比校验专家
     prompt_template: |-
       请判断 项目申报表中地方财政资金和资金承诺函附件的地方财政资金是否一致，如果一致返回true,不一致或者一个为空返回false
 
-      项目申报表中地方财政资金：{a_value}
-      资金承诺函附件的地方财政资金：{b_value}
+      项目申报表中地方财政资金：{field_0}
+      资金承诺函附件的地方财政资金：{field_1}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
   - id: cross_rule_10
     name: 自有资金一致性
     description: 项目申报表中自有资金和资金承诺函附件的自有资金是否一致
-    expected_field_names: [table_ziyou, zijin_ziyou]
     require_field_name: false
     system_prompt: 你是一个数据校验专家
     prompt_template: |-
       请判断 项目申报表中自有资金和资金承诺函附件的自有资金是否一致，如果一致返回true,不一致或者一个为空返回false
 
-      项目申报表中自有资金：{a_value}
-      资金承诺函附件的自有资金：{b_value}
+      项目申报表中自有资金：{field_0}
+      资金承诺函附件的自有资金：{field_1}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
   - id: cross_rule_11
     name: 银行贷款一致性
     description: 项目申报表中银行贷款和资金承诺函附件的银行贷款是否一致
-    expected_field_names: [table_yinhang, zijin_yinhang]
     require_field_name: false
     system_prompt: 你是一个数据校验专家
     prompt_template: |-
       请判断 项目申报表中自有资金和资金承诺函附件的银行贷款是否一致，如果一致返回true,不一致或者一个为空返回false
 
-      项目申报表中银行贷款：{a_value}
-      资金承诺函附件的银行贷款：{b_value}
+      项目申报表中银行贷款：{field_0}
+      资金承诺函附件的银行贷款：{field_1}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由>"}}

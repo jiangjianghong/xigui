@@ -1,0 +1,32 @@
+[project]
+name = "ai-cross-check"
+version = "0.1.0"
+description = "AI交叉校验 - 投资项目文件合规审核规则比对引擎"
+requires-python = ">=3.12"
+dependencies = [
+    "openai>=1.50.0",
+    "pyyaml>=6.0",
+    "ruamel.yaml>=0.18.0",
+    "httpx>=0.27.0",
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.5.0",
+    "python-dateutil>=2.8.2",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "pytest-asyncio",
+    "ruff",
+    "mypy",
+    "respx",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

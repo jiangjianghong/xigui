@@ -38,8 +38,8 @@ def _find_rule_cfg(rule_id: str) -> dict | None:
 def compare(req: CompareRequest) -> CompareResponse:
     t0 = time.perf_counter()
     log.info(
-        "收到比对请求 rule_id=%s field_a.name=%s field_b.name=%s",
-        req.rule_id, req.field_a.name, req.field_b.name,
+        "收到比对请求 rule_id=%s fields=%d",
+        req.rule_id, len(req.fields),
     )
 
     rule_cfg = _find_rule_cfg(req.rule_id)
@@ -52,11 +52,11 @@ def compare(req: CompareRequest) -> CompareResponse:
 
     # 规则级别的 name 必填校验:仅当 yaml 显式 require_field_name=true 时生效。
     if should_require_field_name(rule_cfg):
-        missing = []
-        if not (req.field_a.name or "").strip():
-            missing.append("field_a.name")
-        if not (req.field_b.name or "").strip():
-            missing.append("field_b.name")
+        missing = [
+            f"fields[{i}].name"
+            for i, f in enumerate(req.fields)
+            if not (f.name or "").strip()
+        ]
         if missing:
             log.warning("rule %s 要求 name 必填,缺失: %s", req.rule_id, missing)
             raise HTTPException(
@@ -75,12 +75,7 @@ def compare(req: CompareRequest) -> CompareResponse:
         ) from e
 
     try:
-        res = rule.compare(
-            req.field_a.value,
-            req.field_b.value,
-            a_name=req.field_a.name,
-            b_name=req.field_b.name,
-        )
+        res = rule.compare([(f.value, f.name) for f in req.fields])
     except LLMTimeout as e:
         log.error("LLM 调用超时 rule_id=%s: %s", req.rule_id, e)
         raise HTTPException(
@@ -114,4 +109,5 @@ def compare(req: CompareRequest) -> CompareResponse:
         reason=res.reason,
         time=elapsed_ms,
         cost=Cost(**(res.usage or {})),
+        fields=req.fields,
     )

@@ -37,8 +37,7 @@
 | `id` | ✅ | 规则唯一编号(如 `R001`),**上游调 `/compare` 时按这个 id 找规则** |
 | `name` | ⭕ | 中文规则名(用于日志、对外展示) |
 | `description` | ⭕ | 规则描述,仅用于日志/文档,不影响判定 |
-| `expected_field_names` | ⭕ | 预期的两个字段名(`[a 字段名, b 字段名]`)。**仅文档化,不做强校验** |
-| `require_field_name` | ⭕ | bool。该规则下请求里的 `field_a.name`/`field_b.name` 是否必填(详见 §3) |
+| `require_field_name` | ⭕ | bool。该规则下请求里各字段的 `name` 是否必填(详见 §3) |
 | `system_prompt` | ⭕ | LLM 系统提示。建议每条规则按自身领域显式声明;留空(空字符串)则不向模型发送 system 消息(详见 §4.4) |
 | `prompt_template` | ✅ | **规则的核心**——用自然语言描述判定标准。占位符见 §4 |
 
@@ -46,10 +45,10 @@
 
 ## 3. `require_field_name` 与字段名注入
 
-接口请求里 `field_a` / `field_b` 各有 `name`(字段名)和 `value`(字段值):
+接口请求里 `fields` 是一个数组,每个元素各有 `name`(字段名)和 `value`(字段值):
 
 ```json
-{ "field_a": {"name": "建设单位", "value": "贵州省XX建设有限公司"} }
+{ "fields": [{"name": "建设单位", "value": "贵州省XX建设有限公司"}, ...] }
 ```
 
 - `value` **永远必填**(Pydantic 层校验,缺则 422)
@@ -57,37 +56,37 @@
 
 | `require_field_name` | 行为 |
 | --- | --- |
-| `true` | 上游必须传 `field_a.name` 和 `field_b.name`,缺则返 422 |
+| `true` | 上游必须传各字段的 `name`,缺则返 422 |
 | `false` | 不校验 name,可省略 |
 | 未配置 | 等价于 `false`,但**建议每条规则都显式写出来**(便于审阅) |
 
-**未提供 name 时的 422 响应**:`{"detail":"rule R004 要求 field_a.name 必填"}`
+**未提供 name 时的 422 响应**:`{"detail":"rule R004 要求字段 name 必填"}`
 
 ### 3.1 何时设为 `true`
 
-**只要 `prompt_template` 引用了 `{a_name}` 或 `{b_name}`,就必须设 `true`**——否则 LLM 拿到的会是空字符串,prompt 上下文丢失,判定不准。
+**只要 `prompt_template` 引用了 `{field_0_name}` 或 `{field_1_name}`,就必须设 `true`**——否则 LLM 拿到的会是空字符串,prompt 上下文丢失,判定不准。
 
 ```yaml
 - id: "R004"
-  require_field_name: true   # 因为下面 prompt_template 用了 {a_name}/{b_name}
+  require_field_name: true   # 因为下面 prompt_template 用了 {field_0_name}/{field_1_name}
   prompt_template: |
-    请判断字段"{a_name}"与字段"{b_name}"的两个值是否指向同一主体。
-    A: {a_value}
-    B: {b_value}
+    请判断字段"{field_0_name}"与字段"{field_1_name}"的两个值是否指向同一主体。
+    A: {field_0}
+    B: {field_1}
     ...
 ```
 
 ### 3.2 何时设为 `false`
 
-普通规则,prompt 里没有用到 `{a_name}` / `{b_name}`,name 是否传都不影响判定:
+普通规则,prompt 里没有用到 `{field_0_name}` / `{field_1_name}`,name 是否传都不影响判定:
 
 ```yaml
 - id: "R001"
-  require_field_name: false  # prompt 没用 {a_name},name 可省略
+  require_field_name: false  # prompt 没用 {field_0_name},name 可省略
   prompt_template: |
     判断两个项目代码是否一致。
-    A: {a_value}
-    B: {b_value}
+    A: {field_0}
+    B: {field_1}
     ...
 ```
 
@@ -99,10 +98,10 @@
 
 | 占位符 | 来源 | 说明 |
 | --- | --- | --- |
-| `{a_value}` | 请求 `field_a.value` | **总是有值**(Pydantic 强制) |
-| `{b_value}` | 请求 `field_b.value` | 同上 |
-| `{a_name}` | 请求 `field_a.name` | 用了它就触发 `require_field_name=true` |
-| `{b_name}` | 请求 `field_b.name` | 同上 |
+| `{field_0}` | 请求 `fields[0].value` | **总是有值**(Pydantic 强制) |
+| `{field_1}` | 请求 `fields[1].value` | 同上 |
+| `{field_0_name}` | 请求 `fields[0].name` | 用了它就触发 `require_field_name=true` |
+| `{field_1_name}` | 请求 `fields[1].name` | 同上 |
 
 ### 4.2 必须严格输出 JSON
 
@@ -160,7 +159,7 @@
 | R001 | 项目代码完全一致 | 项目代码 | 项目代码 |
 | R002 | 总投资金额一致 | 总投资 | 总投资金额 |
 | R003 | 批复时间早于申报时间 | 批复时间 | 申报时间 |
-| R004 | 建设单位名称基本一致(用了 `{a_name}/{b_name}`) | 建设单位 | 建设单位 |
+| R004 | 建设单位名称基本一致(用了 `{field_0_name}/{field_1_name}`) | 建设单位 | 建设单位 |
 | R005 | 建设内容详情完全一致 | 建设内容 | 建设内容 |
 
 **需要业务侧确认的几点(很重要)**:
@@ -172,9 +171,7 @@
 
 3. **R001 容忍范围**:当前允许首尾空白、大小写、全半角差异。若业务要求"项目代码必须一模一样,连大小写空白都不能差",在 prompt 里改成"不允许任何字符差异"即可。
 
-4. **`expected_field_names` 是软提醒,不做硬校验**——上游传任意 `field_a.name` 都不会拒绝。如要硬校验请告知。
-
-5. **5 条规则只覆盖 5 种典型场景**,实际业务还需补充:
+4. **5 条规则只覆盖 5 种典型场景**,实际业务还需补充:
    - 建设地点
    - 项目代号/编号交叉一致性
    - 建设规模/工期
@@ -189,7 +186,6 @@
 - **规则 ID**:`R001`、`R002`……三位数字,留 1000 条扩展空间。**不要复用**已经退役的 ID(下游可能还在缓存)
 - **`name`**:简短中文短语,用作日志/前端显示——尽量带上"什么 × 关系"(如"批复时间×申报时间一致")
 - **`description`**:面向后续维护者的"为什么这么写",可以写较详细
-- **`expected_field_names`**:严格用业务字段中文名,与第一阶段 VLM 抽取的字段名保持一致
 
 ---
 
@@ -209,14 +205,13 @@
 - id: "R006"
   name: "建设地点基本一致"
   description: "判断两个建设地点描述是否指向同一位置"
-  expected_field_names: ["建设地点", "建设地点"]
   prompt_template: |
     请判断以下两个"建设地点"描述是否指向同一位置。
     允许差异:行政区划层级写法(如"贵州省贵阳市" 与 "贵阳市")、
     详略不同(如"贵阳市南明区XX路 88 号" 与 "贵阳市南明区")。
     不允许差异:省份/城市/区县任一级别不同。
-    A: {a_value}
-    B: {b_value}
+    A: {field_0}
+    B: {field_1}
     严格按 JSON 输出:
     {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
 ```

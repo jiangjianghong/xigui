@@ -68,7 +68,7 @@ curl http://localhost:6549/health       # 服务自报状态 + 规则数
 
 # 跑一次确定性规则比对（不消耗 token）
 curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
-  -d '{"rule_id":"R001","field_a":{"name":"项目代码","value":"  X "},"field_b":{"name":"项目代码","value":"x"}}'
+  -d '{"rule_id":"R001","fields":[{"name":"项目代码","value":"  X "},{"name":"项目代码","value":"x"}]}'
 ```
 
 ### 2.5 切流量 & 关停旧机
