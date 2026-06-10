@@ -233,3 +233,47 @@ def test_create_then_compare_uses_new_rule(client, isolated_rules, monkeypatch):
     sys_msg = captured["messages"][0]
     assert sys_msg["role"] == "system"
     assert "测试专家" in sys_msg["content"]
+
+
+# ---------------------------------------------------------------------------
+# field_defs 持久化
+# ---------------------------------------------------------------------------
+
+def test_create_rule_with_field_defs(client, isolated_rules):
+    """带 field_defs 创建 → 读取/落盘往返一致。"""
+    payload = dict(NEW_RULE, field_defs=["申报金额", "批复金额", "合同金额"])
+    resp = client.post("/admin/rules", json=payload)
+    assert resp.status_code == 201
+
+    body = client.get("/admin/rules/R999").json()
+    assert body["field_defs"] == ["申报金额", "批复金额", "合同金额"]
+
+    # yaml 文件里也确实写进去了
+    with isolated_rules.open("r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+    saved = next(r for r in data["rules"] if r["id"] == "R999")
+    assert saved["field_defs"] == ["申报金额", "批复金额", "合同金额"]
+
+
+def test_create_rule_without_field_defs_omits_key(client, isolated_rules):
+    """不带 field_defs 创建 → yaml 里不应出现 field_defs: null 的脏键。"""
+    resp = client.post("/admin/rules", json=NEW_RULE)
+    assert resp.status_code == 201
+
+    body = client.get("/admin/rules/R999").json()
+    assert "field_defs" not in body
+
+
+def test_update_rule_field_defs(client, isolated_rules):
+    """PUT 可以更新 field_defs。"""
+    create = client.post(
+        "/admin/rules", json=dict(NEW_RULE, field_defs=["甲", "乙"])
+    )
+    assert create.status_code == 201
+
+    payload = dict(NEW_RULE, field_defs=["甲", "乙", "丙"])
+    resp = client.put("/admin/rules/R999", json=payload)
+    assert resp.status_code == 200
+
+    after = client.get("/admin/rules/R999").json()
+    assert after["field_defs"] == ["甲", "乙", "丙"]

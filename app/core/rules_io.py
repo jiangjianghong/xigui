@@ -79,7 +79,7 @@ def normalize_rule(cfg: dict[str, Any]) -> Any:
     out = CommentedMap()
     # 固定字段顺序,与现有 yaml 视觉一致
     order = [
-        "id", "name", "description",
+        "id", "name", "description", "field_defs",
         "require_field_name", "system_prompt", "prompt_template",
     ]
     for key in order:

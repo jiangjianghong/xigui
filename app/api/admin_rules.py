@@ -40,6 +40,10 @@ class RuleIn(BaseModel):
     id: str = Field(..., min_length=1, description="规则唯一编号(如 R001),建议三位数字")
     name: str | None = Field(default="", description="中文规则名(用于日志/展示)")
     description: str | None = Field(default="", description="规则描述,仅文档用")
+    field_defs: list[str] | None = Field(
+        default=None,
+        description="字段定义列表,下标即 {field_N} 占位符下标,元素为字段业务名(可为空串)",
+    )
     require_field_name: bool = Field(
         default=False,
         description="是否要求请求里每个 field.name 都必填",
@@ -118,7 +122,7 @@ def create_rule(payload: RuleIn) -> dict[str, Any]:
             detail=f"rule_id 已存在: {payload.id}",
         )
 
-    rule_node = normalize_rule(payload.model_dump())
+    rule_node = normalize_rule(payload.model_dump(exclude_none=True))
     if doc.get("rules") is None:
         from ruamel.yaml.comments import CommentedSeq
         doc["rules"] = CommentedSeq()
@@ -150,7 +154,7 @@ def update_rule(rule_id: str, payload: RuleIn) -> dict[str, Any]:
                 detail=f"目标 id 已被占用: {payload.id}",
             )
 
-    doc["rules"][idx] = normalize_rule(payload.model_dump())
+    doc["rules"][idx] = normalize_rule(payload.model_dump(exclude_none=True))
     save_rules_doc(path, doc)
     n = reload_rules()
     if payload.id != rule_id:
