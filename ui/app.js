@@ -95,7 +95,7 @@ function renderRules() {
             <td>${sysBadge}</td>
             <td>
                 <button class="btn-ghost" onclick="openEdit('${escape(r.id)}')"><i class="ri-edit-line"></i> 编辑</button>
-                <button class="btn-ghost text-red-600" onclick="openDel('${escape(r.id)}')"><i class="ri-delete-bin-line"></i> 删除</button>
+                <button class="btn-ghost btn-ghost-danger" onclick="openDel('${escape(r.id)}')"><i class="ri-delete-bin-line"></i> 删除</button>
             </td>
         </tr>`;
     }).join('');
@@ -308,7 +308,7 @@ async function runPlayground() {
         renderPgResult(data, elapsed);
     } catch (e) {
         box.innerHTML = `<div class="result-card result-nomatch">
-            <div class="font-semibold text-red-700"><i class="ri-error-warning-line"></i> 调用失败 (HTTP ${e.status || '??'})</div>
+            <div class="font-semibold text-terra-800"><i class="ri-error-warning-line"></i> 调用失败 (HTTP ${e.status || '??'})</div>
             <div class="text-sm text-surface-700 mt-2">${escape(e.message)}</div>
         </div>`;
     }
@@ -317,7 +317,7 @@ async function runPlayground() {
 function renderPgResult(data, browserElapsed) {
     const box = document.getElementById('pg-result-box');
     const cls = data.result ? 'result-match' : 'result-nomatch';
-    const icon = data.result ? 'ri-checkbox-circle-fill text-green-600' : 'ri-close-circle-fill text-red-600';
+    const icon = data.result ? 'ri-checkbox-circle-fill text-brand-600' : 'ri-close-circle-fill text-terra-600';
     const label = data.result ? '一致 (match=true)' : '不一致 (match=false)';
     box.innerHTML = `
         <div class="result-card ${cls}">
