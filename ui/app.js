@@ -357,16 +357,25 @@ function onPgRuleChange() {
         <span class="text-surface-500 ml-1">${escape(r.description || '')}</span>`;
     preview.textContent = r.prompt_template || '(空)';
 
-    // 从 prompt_template 推断字段数量
-    const matches = r.prompt_template.match(/\{field_\d+\}/g);
-    const count = matches ? Math.max(...matches.map(m => parseInt(m.match(/\d+/)[0]))) + 1 : 2;
-    container.innerHTML = Array.from({length: count}, (_, i) => `
+    // 字段输入框:优先 field_defs(数量+业务名标签);旧规则回落模板反推
+    const defs = Array.isArray(r.field_defs) && r.field_defs.length ? r.field_defs : null;
+    let count;
+    if (defs) {
+        count = defs.length;
+    } else {
+        const matches = r.prompt_template.match(/\{field_\d+\}/g);
+        count = matches ? Math.max(...matches.map(m => parseInt(m.match(/\d+/)[0]))) + 1 : 2;
+    }
+    container.innerHTML = Array.from({length: count}, (_, i) => {
+        const label = defs && defs[i] ? escape(defs[i]) : `fields[${i}]`;
+        const preName = defs && defs[i] ? escape(defs[i]) : '';
+        return `
         <div class="card p-3">
-            <label class="field-label"><span class="name">fields[${i}]</span>${r.require_field_name ? '<span class="required">*</span>' : ''}</label>
-            ${r.require_field_name ? `<input class="input pg-field-name mb-2" data-idx="${i}" placeholder="字段名">` : ''}
-            <textarea class="input pg-field-value" data-idx="${i}" rows="2" placeholder="字段 ${i} 的值"></textarea>
-        </div>
-    `).join('');
+            <label class="field-label"><span class="name">${label}</span>${r.require_field_name ? '<span class="required">*</span>' : ''}</label>
+            ${r.require_field_name ? `<input class="input pg-field-name mb-2" data-idx="${i}" placeholder="字段名" value="${preName}">` : ''}
+            <textarea class="input pg-field-value" data-idx="${i}" rows="2" placeholder="${label} 的值"></textarea>
+        </div>`;
+    }).join('');
 }
 
 async function runPlayground() {
