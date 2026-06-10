@@ -139,6 +139,15 @@ function fillForm(r) {
     document.getElementById('f-require').value = r.require_field_name ? 'true' : 'false';
     document.getElementById('f-system').value = r.system_prompt || '';
     document.getElementById('f-prompt').value = r.prompt_template || '';
+
+    // 字段定义:优先 field_defs;旧规则从模板反推个数,字段名留空
+    let defs = Array.isArray(r.field_defs) && r.field_defs.length ? [...r.field_defs] : null;
+    if (!defs) {
+        const m = (r.prompt_template || '').match(/\{field_(\d+)(?:_name)?\}/g);
+        const count = m ? Math.max(...m.map(s => parseInt(s.match(/\d+/)[0]))) + 1 : 2;
+        defs = Array.from({length: count}, () => '');
+    }
+    renderFieldDefRows(defs);
 }
 
 function closeModal() {
@@ -188,6 +197,57 @@ async function saveRule() {
     } finally {
         btn.disabled = false;
     }
+}
+
+// ---------------------------------------------------------------------------
+// 字段定义区(modal)
+// ---------------------------------------------------------------------------
+
+function getFieldDefs() {
+    return Array.from(document.querySelectorAll('#f-fielddefs .fd-name'))
+        .map(el => el.value);
+}
+
+function renderFieldDefRows(defs) {
+    const box = document.getElementById('f-fielddefs');
+    const single = defs.length <= 1;  // 仅剩 1 行时禁用删除
+    box.innerHTML = defs.map((name, i) => `
+        <div class="flex items-center gap-2">
+            <code class="font-mono text-xs text-surface-500 w-20 shrink-0">{field_${i}}</code>
+            <input class="input fd-name" data-idx="${i}" value="${escape(name)}"
+                   placeholder="字段名,如:申报金额" oninput="renderChips()">
+            <button type="button" class="btn-ghost text-red-600 shrink-0" title="删除该字段"
+                    onclick="removeFieldDef(${i})" ${single ? 'disabled' : ''}>
+                <i class="ri-close-line"></i>
+            </button>
+        </div>
+    `).join('');
+    renderChips();
+}
+
+function addFieldDef() {
+    renderFieldDefRows([...getFieldDefs(), '']);
+}
+
+function removeFieldDef(i) {
+    // 基础版:仅删行重排;Task 3 会替换为带模板占位符自动调整的版本
+    const defs = getFieldDefs();
+    if (defs.length <= 1) return;
+    defs.splice(i, 1);
+    renderFieldDefRows(defs);
+}
+
+function renderChips() {
+    const defs = getFieldDefs();
+    const requireName = document.getElementById('f-require').value === 'true';
+    const box = document.getElementById('f-chips');
+    box.innerHTML = defs.map((name, i) => {
+        const label = escape(name.trim() || `字段${i}`);
+        const nameChip = requireName
+            ? `<span class="chip" title="插入 {field_${i}_name}" onclick="insertPlaceholder('{field_${i}_name}')">${label}·名</span>`
+            : '';
+        return `<span class="chip" title="插入 {field_${i}}" onclick="insertPlaceholder('{field_${i}}')">${label}</span>${nameChip}`;
+    }).join('') + `<span class="chip" onclick="insertPlaceholder('{{&quot;match&quot;: true|false, &quot;reason&quot;: &quot;<不超过30字>&quot;}}')">JSON 输出范式</span>`;
 }
 
 // 占位符 chip 插入到 prompt textarea
