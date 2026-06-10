@@ -143,10 +143,10 @@ function fillForm(r) {
     // 字段定义:优先 field_defs;旧规则从模板反推个数,字段名留空。
     // field_defs 比模板占位符少时(手改 yaml),按占位符补齐空名行,暴露不一致。
     const m = (r.prompt_template || '').match(/\{field_(\d+)(?:_name)?\}/g);
-    const inferred = m ? Math.max(...m.map(s => parseInt(s.match(/\d+/)[0]))) + 1 : 2;
+    const inferred = m ? Math.max(...m.map(s => parseInt(s.match(/\d+/)[0]))) + 1 : 0;
     let defs = Array.isArray(r.field_defs) && r.field_defs.length ? [...r.field_defs] : [];
     if (!defs.length) {
-        defs = Array.from({length: inferred}, () => '');
+        defs = Array.from({length: inferred || 2}, () => '');
     } else {
         while (defs.length < inferred) defs.push('');
     }
