@@ -1,4 +1,4 @@
-# 规则活配置
+# 规则配置(tests 专用 fixture)
 #
 # 字段说明:
 #   id                     规则唯一标识(上游传入的 rule_id)
@@ -83,6 +83,7 @@ rules:
   - id: "R004"
     name: "建设单位名称基本一致"
     description: "容忍简称/全称/前后缀差异;把字段名注入 prompt,让 LLM 知道在判什么"
+    field_defs: ["建设单位A", "建设单位B"]
     require_field_name: true
     system_prompt: "你是熟悉企业法人主体识别的合规审核员,能区分简称、全称、行政区划前缀、母公司与分支机构,输出严格遵守约定格式。"
     prompt_template: |

@@ -74,6 +74,8 @@ def test_get_single_rule(client, isolated_rules):
     assert body["id"] == "R004"
     assert body["require_field_name"] is True
     assert "{field_0_name}" in body["prompt_template"]
+    # field_defs 读路径:yaml 落盘 → GET 读出
+    assert body["field_defs"] == ["建设单位A", "建设单位B"]
 
 
 def test_get_unknown_rule_returns_404(client, isolated_rules):
@@ -193,13 +195,13 @@ def test_delete_unknown_returns_404(client, isolated_rules):
 def test_yaml_comments_preserved_after_write(client, isolated_rules):
     """新增一条规则后,文件顶部的字段说明注释不应消失。"""
     before = isolated_rules.read_text(encoding="utf-8")
-    assert "# 规则活配置" in before  # 头部注释存在
+    assert "# 规则配置(tests 专用 fixture)" in before  # 头部注释存在
 
     resp = client.post("/admin/rules", json=NEW_RULE)
     assert resp.status_code == 201
 
     after = isolated_rules.read_text(encoding="utf-8")
-    assert "# 规则活配置" in after
+    assert "# 规则配置(tests 专用 fixture)" in after
     assert "# 字段说明" in after
     # 新规则确实被追加在末尾
     assert "R999" in after

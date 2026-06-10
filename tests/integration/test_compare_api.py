@@ -39,6 +39,7 @@ def isolated_rules(monkeypatch):
     monkeypatch.setattr(cfg_module, "get_config", _fake_get_config)
     cfg_module.reload_rules()
     yield
+    # 缓存自愈靠 get_rules 的 path/mtime 比对;此处 monkeypatch 仍生效,reload 只是兜底
     cfg_module.reload_rules()
 
 
