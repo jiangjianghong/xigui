@@ -28,8 +28,7 @@ LLM 支持两套后端:阿里云百炼(`dashscope`)与本地 vLLM 部署的 Qwen
 │   └── rules.yaml       # 规则活配置(修改即生效)
 ├── docker/              # Dockerfile + entrypoint
 ├── docs/                # 接口/部署/开发文档
-├── requirements/        # base/dev/prod 三档依赖
-├── scripts/             # start/stop/restart/package_offline
+├── scripts/             # start/stop/restart
 ├── tests/               # unit + integration
 ├── docker-compose.yml
 └── Makefile

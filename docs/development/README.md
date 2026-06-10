@@ -18,13 +18,11 @@ make sh        # 进入容器
 代码挂载已开启,在主机用任意编辑器修改 `app/` 源文件即可,保存后执行 `make restart`(或在容器内手动重启进程)。
 修改 `config/rules.yaml` 后**无需任何动作**,下一次请求自动 reload。
 
-### 方式 B:宿主机虚拟环境
+### 方式 B:宿主机 uv 环境
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements/dev.txt
-python -m app.main
+uv sync --dev
+uv run app.py
 ```
 
 ## 代码规范与测试

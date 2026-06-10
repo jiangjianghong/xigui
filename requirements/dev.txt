@@ -1,8 +1,0 @@
--r base.txt
-# 本地开发 & CI 工具
-pytest
-pytest-cov
-pytest-asyncio
-ruff
-mypy
-respx

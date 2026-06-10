@@ -6,7 +6,6 @@
 | --- | --- |
 | 有网络的服务器,首次部署或日常更新(docker) | [docker_deployment.md](docker_deployment.md) |
 | 目标服务器使用 nerdctl/containerd 而非 docker | [nerdctl_deployment.md](nerdctl_deployment.md) |
-| 目标服务器无外网,需要打包离线包 | [offline_deployment.md](offline_deployment.md) |
 | 整机搬迁/换服务器,迁移已运行的服务 | [migration.md](migration.md) |
 
 > 项目的 Makefile 和 scripts 都已支持 `CONTAINER_CMD` 变量,docker 与 nerdctl

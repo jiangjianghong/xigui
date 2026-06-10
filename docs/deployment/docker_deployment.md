@@ -36,7 +36,7 @@ git pull            # 或者直接 scp/rsync 覆盖 app/ 目录
 make restart
 ```
 
-> 仅当依赖（`requirements/*.txt`）或 `Dockerfile` 改变时才需要 `make build`，
+> 仅当依赖（`pyproject.toml` / `uv.lock`）或 `Dockerfile` 改变时才需要 `make build`，
 > 否则 restart 即可。
 
 ## 规则热更新（无需 restart）

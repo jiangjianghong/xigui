@@ -65,7 +65,7 @@ Available targets (CONTAINER_CMD=nerdctl, PYTHON_IMAGE=..., APT_MIRROR=mirrors.a
   ...
 ```
 
-scripts/ 下的 `start.sh` / `stop.sh` / `restart.sh` / `package_offline.sh`
+scripts/ 下的 `start.sh` / `stop.sh` / `restart.sh`
 也都读 `CONTAINER_CMD`,行为一致。
 
 > ⚠️ **构建 vs 启动**:`make build` 调用 `compose build`,接收 `PYTHON_IMAGE`/`APT_MIRROR` 等 build-arg;

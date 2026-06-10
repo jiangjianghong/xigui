@@ -263,7 +263,7 @@ function onPgRuleChange() {
 
     // 从 prompt_template 推断字段数量
     const matches = r.prompt_template.match(/\{field_\d+\}/g);
-    const count = matches ? Math.max(...matches.map(m => parseInt(m.match(/\d+/)[0])) + 1) : 2;
+    const count = matches ? Math.max(...matches.map(m => parseInt(m.match(/\d+/)[0]))) + 1 : 2;
     container.innerHTML = Array.from({length: count}, (_, i) => `
         <div class="card p-3">
             <label class="field-label"><span class="name">fields[${i}]</span>${r.require_field_name ? '<span class="required">*</span>' : ''}</label>
