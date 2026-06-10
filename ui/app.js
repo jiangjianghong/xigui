@@ -140,12 +140,15 @@ function fillForm(r) {
     document.getElementById('f-system').value = r.system_prompt || '';
     document.getElementById('f-prompt').value = r.prompt_template || '';
 
-    // 字段定义:优先 field_defs;旧规则从模板反推个数,字段名留空
-    let defs = Array.isArray(r.field_defs) && r.field_defs.length ? [...r.field_defs] : null;
-    if (!defs) {
-        const m = (r.prompt_template || '').match(/\{field_(\d+)(?:_name)?\}/g);
-        const count = m ? Math.max(...m.map(s => parseInt(s.match(/\d+/)[0]))) + 1 : 2;
-        defs = Array.from({length: count}, () => '');
+    // 字段定义:优先 field_defs;旧规则从模板反推个数,字段名留空。
+    // field_defs 比模板占位符少时(手改 yaml),按占位符补齐空名行,暴露不一致。
+    const m = (r.prompt_template || '').match(/\{field_(\d+)(?:_name)?\}/g);
+    const inferred = m ? Math.max(...m.map(s => parseInt(s.match(/\d+/)[0]))) + 1 : 2;
+    let defs = Array.isArray(r.field_defs) && r.field_defs.length ? [...r.field_defs] : [];
+    if (!defs.length) {
+        defs = Array.from({length: inferred}, () => '');
+    } else {
+        while (defs.length < inferred) defs.push('');
     }
     renderFieldDefRows(defs);
 }
@@ -161,6 +164,7 @@ function readForm() {
         description: document.getElementById('f-desc').value.trim(),
         require_field_name: document.getElementById('f-require').value === 'true',
         system_prompt: document.getElementById('f-system').value,
+        field_defs: getFieldDefs().map(s => s.trim()),
         prompt_template: document.getElementById('f-prompt').value,
     };
 }
@@ -169,6 +173,26 @@ async function saveRule() {
     const payload = readForm();
     if (!payload.id) { toast('id 不能为空', 'error'); return; }
     if (!payload.prompt_template.trim()) { toast('prompt_template 不能为空', 'error'); return; }
+
+    // 字段定义校验
+    const defCount = payload.field_defs.length;
+    const phMatches = payload.prompt_template.match(/\{field_(\d+)(?:_name)?\}/g) || [];
+    const maxIdx = phMatches.length
+        ? Math.max(...phMatches.map(s => parseInt(s.match(/\d+/)[0]))) : -1;
+    if (maxIdx >= defCount) {
+        toast(`模板引用了 {field_${maxIdx}},但只定义了 ${defCount} 个字段(最大下标 ${defCount - 1})`, 'error');
+        return;
+    }
+    if (payload.require_field_name && payload.field_defs.some(n => !n)) {
+        toast('require_field_name=true 时,所有字段名必填', 'error');
+        return;
+    }
+    // 定义了但模板没用上 → 非阻断提醒
+    const usedIdx = new Set(phMatches.map(s => parseInt(s.match(/\d+/)[0])));
+    const unused = payload.field_defs
+        .map((n, i) => usedIdx.has(i) ? null : `{field_${i}}${n ? `(${n})` : ''}`)
+        .filter(Boolean);
+    if (unused.length && !confirm(`以下字段已定义但模板未引用:${unused.join('、')}。确认继续保存吗?`)) return;
 
     // 友好提示:模板用了 {field_N_name} 但没勾 require_field_name
     if (/\{field_\d+_name\}/.test(payload.prompt_template) && !payload.require_field_name) {
