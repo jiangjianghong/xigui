@@ -15,6 +15,7 @@ import time
 from fastapi import APIRouter, HTTPException, status
 
 from app.core.config import get_rules
+from app.core.history import get_history_store
 from app.core.llm_client import LLMTimeout, LLMUpstreamError
 from app.rules.registry import build_rule, should_require_field_name
 from app.schemas.compare import CompareRequest, CompareResponse, Cost
@@ -102,6 +103,19 @@ def compare(req: CompareRequest) -> CompareResponse:
     )
     # extra 字段可能含 LLM 原始返回片段，仅 debug 级别打印
     log.debug("extra rule_id=%s extra=%s", req.rule_id, res.extra)
+
+    # 记录历史
+    history = get_history_store()
+    history.add({
+        "rule_id": req.rule_id,
+        "rule_name": rule_cfg.get("name", ""),
+        "fields": [f.model_dump() for f in req.fields],
+        "result": res.match,
+        "reason": res.reason,
+        "time_ms": elapsed_ms,
+        "cost": res.usage or {},
+        "raw_request": req.model_dump(),
+    })
 
     return CompareResponse(
         rule_id=req.rule_id,

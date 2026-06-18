@@ -19,7 +19,7 @@ from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import admin, admin_rules, compare, health
+from app.api import admin, admin_rules, compare, health, history
 from app.core.config import PROJECT_ROOT, get_config, get_rules
 from app.core.logging import setup_logging
 
@@ -61,6 +61,7 @@ app.include_router(health.router)
 app.include_router(compare.router)
 app.include_router(admin.router, prefix="/admin")
 app.include_router(admin_rules.router, prefix="/admin")
+app.include_router(history.router, prefix="/admin")
 
 
 # ---------------------------------------------------------------------------

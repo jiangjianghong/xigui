@@ -49,11 +49,15 @@ function escape(s) {
 // ---------------------------------------------------------------------------
 
 function switchTab(tab) {
-    for (const t of ['rules', 'playground']) {
+    for (const t of ['rules', 'playground', 'history']) {
         document.getElementById(`tab-${t}`).classList.toggle('active', t === tab);
         document.getElementById(`page-${t}`).classList.toggle('hidden', t !== tab);
     }
     if (tab === 'playground') refreshPgRules();
+    if (tab === 'history') {
+        refreshHistoryFilter();
+        loadHistory();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -460,3 +464,154 @@ async function reloadAll() {
 
 // 启动
 loadRules();
+
+// ---------------------------------------------------------------------------
+// 请求历史
+// ---------------------------------------------------------------------------
+
+let HISTORY_PAGE = 0;
+const HISTORY_PAGE_SIZE = 20;
+
+function refreshHistoryFilter() {
+    const sel = document.getElementById('history-filter-rule');
+    sel.innerHTML = '<option value="">全部规则</option>' + RULES.map(r =>
+        `<option value="${escape(r.id)}">${escape(r.id)} · ${escape(r.name || '')}</option>`
+    ).join('');
+}
+
+async function loadHistory() {
+    const ruleId = document.getElementById('history-filter-rule').value;
+    const result = document.getElementById('history-filter-result').value;
+    const params = new URLSearchParams({
+        limit: HISTORY_PAGE_SIZE,
+        offset: HISTORY_PAGE * HISTORY_PAGE_SIZE,
+    });
+    if (ruleId) params.set('rule_id', ruleId);
+    if (result !== '') params.set('result', result);
+
+    try {
+        const data = await api('GET', `/admin/history?${params}`);
+        renderHistory(data);
+    } catch (e) {
+        toast('加载历史失败: ' + e.message, 'error');
+    }
+}
+
+function renderHistory(data) {
+    const list = document.getElementById('history-list');
+    const empty = document.getElementById('history-empty');
+    const pagination = document.getElementById('history-pagination');
+
+    if (!data.items || data.items.length === 0) {
+        list.innerHTML = '';
+        empty.classList.remove('hidden');
+        pagination.classList.add('hidden');
+        return;
+    }
+
+    empty.classList.add('hidden');
+    pagination.classList.remove('hidden');
+
+    document.getElementById('history-total').textContent = data.total;
+    const totalPages = Math.ceil(data.total / HISTORY_PAGE_SIZE) || 1;
+    document.getElementById('history-page-info').textContent = `${HISTORY_PAGE + 1} / ${totalPages}`;
+    document.getElementById('history-prev').disabled = HISTORY_PAGE <= 0;
+    document.getElementById('history-next').disabled = HISTORY_PAGE >= totalPages - 1;
+
+    list.innerHTML = data.items.map(record => {
+        const resultBadge = record.result
+            ? '<span class="badge badge-success">一致</span>'
+            : '<span class="badge badge-warning">不一致</span>';
+        const cost = record.cost || {};
+        const totalTokens = cost.total_tokens || 0;
+        const promptTokens = cost.prompt_tokens || 0;
+        const completionTokens = cost.completion_tokens || 0;
+        const createdAt = record.created_at ? new Date(record.created_at).toLocaleString('zh-CN') : '-';
+        const timeMs = record.time_ms || 0;
+
+        return `
+        <div class="card p-4 history-record" data-id="${escape(record.id)}">
+            <div class="flex items-center justify-between cursor-pointer" onclick="toggleHistoryDetail('${escape(record.id)}')">
+                <div class="flex items-center gap-3">
+                    ${resultBadge}
+                    <code class="font-mono text-sm text-brand-700">${escape(record.rule_id)}</code>
+                    <span class="text-sm text-surface-600">${escape(record.rule_name || '')}</span>
+                </div>
+                <div class="flex items-center gap-4 text-sm text-surface-500">
+                    <span title="请求时间"><i class="ri-time-line mr-1"></i>${createdAt}</span>
+                    <span title="耗时"><i class="ri-timer-line mr-1"></i>${timeMs} ms</span>
+                    <span title="Token 消耗"><i class="ri-token-swap-line mr-1"></i>${totalTokens}</span>
+                    <i class="ri-arrow-down-s-line history-arrow transition-transform"></i>
+                </div>
+            </div>
+            <div class="history-detail hidden mt-4 pt-4 border-t border-surface-200">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <div class="text-xs text-surface-500 mb-1">判断理由</div>
+                        <div class="text-sm text-surface-700">${escape(record.reason || '-')}</div>
+                    </div>
+                    <div>
+                        <div class="text-xs text-surface-500 mb-1">Token 明细</div>
+                        <div class="grid grid-cols-3 gap-2 text-sm">
+                            <div><span class="text-surface-500">输入:</span> ${promptTokens}</div>
+                            <div><span class="text-surface-500">输出:</span> ${completionTokens}</div>
+                            <div><span class="text-surface-500">总计:</span> ${totalTokens}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <div class="text-xs text-surface-500 mb-1">比对字段</div>
+                    <div class="space-y-1">
+                        ${(record.fields || []).map((f, i) => `
+                            <div class="text-sm">
+                                <span class="text-surface-500">${escape(f.name || `字段${i}`)}:</span>
+                                <span class="text-surface-700 ml-1">${escape(f.value || '-')}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                <details>
+                    <summary class="text-xs text-surface-500 cursor-pointer hover:text-surface-700">
+                        <i class="ri-code-line mr-1"></i>查看原始请求 JSON
+                    </summary>
+                    <pre class="code-block mt-2">${escape(JSON.stringify(record.raw_request || {}, null, 2))}</pre>
+                </details>
+            </div>
+        </div>`;
+    }).join('');
+}
+
+function toggleHistoryDetail(id) {
+    const record = document.querySelector(`.history-record[data-id="${id}"]`);
+    if (!record) return;
+    const detail = record.querySelector('.history-detail');
+    const arrow = record.querySelector('.history-arrow');
+    detail.classList.toggle('hidden');
+    if (arrow) {
+        arrow.style.transform = detail.classList.contains('hidden') ? '' : 'rotate(180deg)';
+    }
+}
+
+function historyPrevPage() {
+    if (HISTORY_PAGE > 0) {
+        HISTORY_PAGE--;
+        loadHistory();
+    }
+}
+
+function historyNextPage() {
+    HISTORY_PAGE++;
+    loadHistory();
+}
+
+async function clearHistory() {
+    if (!confirm('确定要清空所有请求历史记录吗？此操作不可撤销。')) return;
+    try {
+        await api('DELETE', '/admin/history');
+        toast('历史记录已清空', 'success');
+        HISTORY_PAGE = 0;
+        await loadHistory();
+    } catch (e) {
+        toast('清空失败: ' + e.message, 'error');
+    }
+}

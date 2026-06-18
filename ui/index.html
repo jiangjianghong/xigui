@@ -299,6 +299,17 @@
         ::-webkit-scrollbar { width: 10px; height: 10px; }
         ::-webkit-scrollbar-thumb { background: var(--bio-light); border-radius: 50px; border: 2px solid transparent; background-clip: content-box; }
         ::-webkit-scrollbar-track { background: var(--bio-pale); }
+
+        /* ===== 历史筛选下拉框 ===== */
+        #history-filter-rule,
+        #history-filter-result {
+            flex: 0 0 auto !important;
+            width: auto !important;
+            min-width: 280px !important;
+        }
+        #history-filter-result {
+            min-width: 180px !important;
+        }
     </style>
 </head>
 <body class="min-h-screen">
@@ -321,6 +332,9 @@
                 </button>
                 <button id="tab-playground" class="tab" onclick="switchTab('playground')">
                     <i class="ri-flask-line mr-1"></i> 规则试跑
+                </button>
+                <button id="tab-history" class="tab" onclick="switchTab('history')">
+                    <i class="ri-history-line mr-1"></i> 请求历史
                 </button>
                 <button class="btn-outline" onclick="reloadAll()" title="手动刷新缓存">
                     <i class="ri-refresh-line"></i>
@@ -401,6 +415,63 @@
 
                     <h3 class="text-sm font-bold text-surface-700 mt-5 mb-2">当前 prompt_template 预览</h3>
                     <pre id="pg-prompt-preview" class="code-block">(选规则后展示)</pre>
+                </div>
+            </div>
+        </section>
+
+        <!-- ====== 请求历史 ====== -->
+        <section id="page-history" class="hidden">
+            <div class="card p-6">
+                <div class="mb-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <div>
+                            <h2 class="text-base font-bold text-surface-900 flex items-center gap-2">
+                                <i class="ri-history-line text-brand-600"></i> 请求历史
+                            </h2>
+                            <p class="text-sm text-surface-500 mt-1">查看所有比对请求的历史记录，包括入参、结果、耗时和 token 消耗。</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button class="btn-outline" onclick="loadHistory()" title="刷新">
+                                <i class="ri-refresh-line"></i>
+                            </button>
+                            <button class="btn-ghost btn-ghost-danger" onclick="clearHistory()" title="清空历史">
+                                <i class="ri-delete-bin-line"></i> 清空
+                            </button>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-4">
+                        <label class="text-sm font-semibold text-surface-600 shrink-0">筛选：</label>
+                        <select id="history-filter-rule" class="input" style="width: 300px !important; min-width: 250px; flex-shrink: 0;" onchange="loadHistory()">
+                            <option value="">全部规则</option>
+                        </select>
+                        <select id="history-filter-result" class="input" style="width: 180px !important; min-width: 140px; flex-shrink: 0;" onchange="loadHistory()">
+                            <option value="">全部结果</option>
+                            <option value="true">一致</option>
+                            <option value="false">不一致</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="history-list" class="space-y-3"></div>
+
+                <div id="history-empty" class="hidden text-center py-14 text-surface-400">
+                    <i class="ri-history-line text-5xl"></i>
+                    <p class="mt-3">暂无请求历史记录</p>
+                </div>
+
+                <div id="history-pagination" class="flex items-center justify-between mt-5 pt-4 border-t border-surface-200">
+                    <div class="text-sm text-surface-500">
+                        共 <span id="history-total">0</span> 条记录
+                    </div>
+                    <div class="flex gap-2">
+                        <button id="history-prev" class="btn-ghost" onclick="historyPrevPage()" disabled>
+                            <i class="ri-arrow-left-s-line"></i> 上一页
+                        </button>
+                        <span id="history-page-info" class="text-sm text-surface-500 flex items-center px-3">1 / 1</span>
+                        <button id="history-next" class="btn-ghost" onclick="historyNextPage()" disabled>
+                            下一页 <i class="ri-arrow-right-s-line"></i>
+                        </button>
+                    </div>
                 </div>
             </div>
         </section>
