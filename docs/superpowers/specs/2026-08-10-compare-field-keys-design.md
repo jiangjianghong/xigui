@@ -1,7 +1,9 @@
 # `/compare` 入参改造设计：`fields` 数组 → `field_a`/`field_b`/… 平铺键
 
 日期：2026-08-10
-状态：已确认，待实施
+状态：**已作废** —— 被 `2026-08-20-compare-custom-field-ids-design.md` 取代。
+本文假设生产接口是 `fields` 数组，实测生产用的一直是 `field_a`/`field_b` 平铺键；
+且本文只做到固定字母键，不支持规则自定义字段 ID。
 
 ## 背景
 
