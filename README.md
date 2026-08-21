@@ -6,7 +6,7 @@
 
 后端在第一阶段用多模态模型从原始文件(可研批复、初设批复、项目纳入实施方案说明、削绩情况说明、地方财政资金承诺函等)抽取字段,存入数据库后,调用本服务的 `POST /compare` 接口:
 
-- 输入:规则 ID + 字段数组 `fields: [{name, value}, ...]`
+- 输入:规则 ID + 平铺的字段键 `{rule_id, field_a: {name?, value}, field_b: {...}}`。键名由规则的 `field_defs` 决定,未配则是 `field_a`/`field_b`/...
 - 处理:按规则配的 `prompt_template` 调 LLM 做比对
 - 输出:`{rule_id, result, reason, time, cost}`
 
@@ -61,10 +61,12 @@ http://localhost:6549/        # 自动跳转 /ui/
 curl -X POST http://localhost:6549/compare \
   -H "Content-Type: application/json" \
   -d '{"rule_id":"R001",
-       "fields":[{"name":"项目代码","value":"  2024-001 "},
-                 {"name":"项目代码","value":"2024-001"}]}'
+       "field_a":{"name":"项目代码","value":"  2024-001 "},
+       "field_b":{"name":"项目代码","value":"2024-001"}}'
 # {"rule_id":"R001","result":true,"reason":"两个项目代码一致","time":312,
-#  "cost":{"prompt_tokens":156,"completion_tokens":12,"total_tokens":168}}
+#  "cost":{"prompt_tokens":156,"completion_tokens":12,"total_tokens":168},
+#  "field_a":{"name":"项目代码","value":"  2024-001 "},
+#  "field_b":{"name":"项目代码","value":"2024-001"}}
 ```
 
 更多示例见 [docs/api/README.md](docs/api/README.md)。

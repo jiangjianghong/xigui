@@ -45,26 +45,38 @@
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `rule_id` | string | 是 | 规则 ID，对应 `config/rules.yaml` 中的 `id` |
-| `fields` | array | 是 | 字段列表（1~N 个），每个元素含 `name`（可选）和 `value`（必填） |
-| `fields[].value` | string | 是 | 字段的文本值 |
-| `fields[].name` | string | **看规则** | 字段名。**默认可省略**;若规则配了 `require_field_name: true`,缺则 422 |
+| `<字段键>` | object | 是 | 每个待比对字段一个顶层键，值为 `{name?, value}`。键名由规则决定，见下 |
+| `<字段键>.value` | string | 是 | 字段的文本值 |
+| `<字段键>.name` | string | **看规则** | 字段名。**默认可省略**;若规则配了 `require_field_name: true`,缺则 422 |
+
+**字段键怎么定：**
+
+- 规则没配 `field_defs` → 键是 `field_a`、`field_b`、`field_c`…，个数按 `prompt_template` 里最大的字母占位符
+- 规则配了 `field_defs: [keyan_name, zixun_name]` → 键就是这两个 ID，此时传 `field_a` 会返 422
+
+请求键必须与规则的键集合**完全相等**：少传、多传、拼错都返 422，`detail` 里会指名缺哪个/多哪个。
 
 请求示例：
 
 ```json
-// 单字段校验
-{
-  "rule_id": "cross_rule_08",
-  "fields": [{"value": "DN500管网5公里，新建"}]
-}
-
-// 两字段交叉
+// 默认字母键
 {
   "rule_id": "cross_rule_01",
-  "fields": [
-    {"name": "总投资", "value": "1.2亿"},
-    {"name": "总投资金额", "value": "12000万元"}
-  ]
+  "field_a": {"name": "总投资", "value": "1.2亿"},
+  "field_b": {"name": "总投资金额", "value": "12000万元"}
+}
+
+// 规则自定义 ID（该规则 field_defs: [keyan_name_baogao, zixun_name_baogao]）
+{
+  "rule_id": "xiangmu_rule_01",
+  "keyan_name_baogao": {"value": "XX供水工程"},
+  "zixun_name_baogao": {"value": "XX供水项目"}
+}
+
+// 单字段规则
+{
+  "rule_id": "zhongxue_cross_wenjainming",
+  "field_a": {"value": "DN500管网5公里，新建"}
 }
 ```
 
@@ -79,7 +91,7 @@
 | `cost.prompt_tokens` | int | LLM 输入 token |
 | `cost.completion_tokens` | int | LLM 输出 token |
 | `cost.total_tokens` | int | 总 token |
-| `fields` | array | 回显传入的字段列表 |
+| `<字段键>` | object | 回显传入的字段，键名与请求一致。未传的键不出现 |
 
 响应示例：
 
@@ -90,36 +102,33 @@
   "reason": "1.2亿等于12000万元",
   "time": 1520,
   "cost": {"prompt_tokens": 156, "completion_tokens": 12, "total_tokens": 168},
-  "fields": [
-    {"name": "总投资", "value": "1.2亿"},
-    {"name": "总投资金额", "value": "12000万元"}
-  ]
+  "field_a": {"name": "总投资", "value": "1.2亿"},
+  "field_b": {"name": "总投资金额", "value": "12000万元"}
 }
 ```
 
 #### curl 示例
 
 > 所有规则均走 LLM,判定边界由 `config/rules.yaml` 中各自的 `prompt_template` 描述。
-> prompt 中使用 `{field_0}` `{field_1}` ... 按索引引用字段值,`{field_0_name}` ... 引用字段名。
+> prompt 里用 `{键}` 引用字段值、`{键_name}` 引用字段名,键名与请求体一致。
 
 ```bash
-# 单字段校验
+# 单字段规则
 curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
-  -d '{"rule_id":"cross_rule_08",
-       "fields":[{"value":"DN500管网5公里，新建"}]}'
+  -d '{"rule_id":"zhongxue_cross_wenjainming",
+       "field_a":{"value":"DN500管网5公里，新建"}}'
 
-# 两字段交叉
+# 默认字母键
 curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
   -d '{"rule_id":"cross_rule_01",
-       "fields":[{"name":"总投资","value":"1.2亿"},
-                 {"name":"总投资金额","value":"12000万元"}]}'
+       "field_a":{"name":"总投资","value":"1.2亿"},
+       "field_b":{"name":"总投资金额","value":"12000万元"}}'
 
-# 三字段交叉（示例）
+# 规则自定义 ID
 curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
-  -d '{"rule_id":"some_rule",
-       "fields":[{"name":"申报表","value":"500万"},
-                 {"name":"批复","value":"500万"},
-                 {"name":"承诺函","value":"500万"}]}'
+  -d '{"rule_id":"xiangmu_rule_01",
+       "keyan_name_baogao":{"value":"XX供水工程"},
+       "zixun_name_baogao":{"value":"XX供水项目"}}'
 ```
 
 #### 错误码
@@ -128,8 +137,10 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
 | --- | --- | --- |
 | 200 | 比对成功(无论 true / false) | `CompareResponse` |
 | 200 | LLM 输出非合法 JSON | `result: false, reason: "LLM 输出非法 JSON"` |
-| 422 | 请求参数 schema 校验失败(如 value 缺失) | FastAPI 默认 |
-| 422 | 规则要求 name 必填但缺失 | `{"detail":"rule cross_rule_XX 要求 fields[0].name 必填"}` |
+| 422 | 字段值形状不对(缺 `value`、值不是对象、传了已废弃的 `fields` 数组) | FastAPI 默认 |
+| 422 | 字段键不匹配:少传/多传/拼错 | `{"detail":"rule cross_rule_XX 缺少字段: field_b（本规则需要: field_a, field_b）"}` |
+| 422 | 规则要求 name 必填但缺失 | `{"detail":"rule cross_rule_XX 要求 field_a.name 必填"}` |
+| 422 | 写规则时 `field_defs` 元素非法 | `{"detail":"field_defs 元素非法: '建设单位A'..."}` |
 | 404 | `rule_id` 不存在 | `{"detail":"rule_id 不存在: cross_rule_XX"}` |
 | 500 | rules.yaml 配置错误 / 其他未捕获异常 | `{"detail":"..."}` |
 | 502 | LLM 上游错误(鉴权/网络) | `{"detail":"LLM 上游错误: ..."}` |
@@ -184,10 +195,10 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
 | `id` | string | 是 | 规则唯一编号（如 `cross_rule_01`），建议使用 `cross_rule_XX` 格式 |
 | `name` | string | 否 | 中文规则名（用于日志/展示） |
 | `description` | string | 否 | 规则描述，仅文档用 |
-| `field_defs` | list[string] | 否 | 字段定义列表，下标即 `{field_N}` 占位符下标，元素为字段业务名（可为空串） |
+| `field_defs` | list[string] | 否 | 自定义字段 ID 列表，元素即请求体里的字段键。不写/为空则用 `field_a`/`field_b`/…。元素须匹配 `^[A-Za-z_][A-Za-z0-9_]*$`、规则内不重复、不得为 `rule_id` |
 | `require_field_name` | bool | 否 | 是否要求请求里每个 `field.name` 都必填。默认 `false` |
 | `system_prompt` | string | 否 | LLM 系统提示。留空则不向模型发送 system 消息 |
-| `prompt_template` | string | 是 | prompt 模板，支持占位符 `{field_0}`/`{field_1}`/.../`{field_0_name}`/... |
+| `prompt_template` | string | 是 | prompt 模板，占位符与字段键同名：`{field_a}` 或 `{keyan_name}`，加 `_name` 后缀引用字段名 |
 
 请求示例：
 
@@ -199,7 +210,7 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
   "field_defs": ["字段A", "字段B"],
   "require_field_name": false,
   "system_prompt": "你是一个校验专家",
-  "prompt_template": "请判断以下两个值是否一致：\nA: {field_0}\nB: {field_1}\n严格按 JSON 输出: {{\"match\": true|false, \"reason\": \"<理由>\"}}"
+  "prompt_template": "请判断以下两个值是否一致：\nA: {field_a}\nB: {field_b}\n严格按 JSON 输出: {{\"match\": true|false, \"reason\": \"<理由>\"}}"
 }
 ```
 
@@ -238,8 +249,8 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
       "rule_id": "cross_rule_01",
       "rule_name": "总投资金额一致",
       "fields": [
-        {"name": "总投资", "value": "1.2亿"},
-        {"name": "总投资金额", "value": "12000万元"}
+        {"key": "field_a", "name": "总投资", "value": "1.2亿"},
+        {"key": "field_b", "name": "总投资金额", "value": "12000万元"}
       ],
       "result": true,
       "reason": "1.2亿等于12000万元",
@@ -248,10 +259,8 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
       "created_at": "2025-01-15T10:30:45.123456",
       "raw_request": {
         "rule_id": "cross_rule_01",
-        "fields": [
-          {"name": "总投资", "value": "1.2亿"},
-          {"name": "总投资金额", "value": "12000万元"}
-        ]
+        "field_a": {"name": "总投资", "value": "1.2亿"},
+        "field_b": {"name": "总投资金额", "value": "12000万元"}
       }
     }
   ]
@@ -339,14 +348,15 @@ curl -X DELETE http://localhost:6549/admin/history
 | `id` | string | 规则唯一标识（如 `cross_rule_01`） |
 | `name` | string | 规则名称（仅用于日志/文档） |
 | `description` | string | 规则描述（仅用于日志/文档） |
-| `field_defs` | list[string] | 字段定义列表，下标即 `{field_N}` 占位符下标 |
+| `field_defs` | list[string] | 自定义字段 ID 列表，元素即请求体里的字段键。不写/为空则用 `field_a`/`field_b`/… |
 | `require_field_name` | bool | 是否要求请求里每个 `field.name` 都必填 |
 | `system_prompt` | string | LLM 系统提示 |
-| `prompt_template` | string | Prompt 模板，支持 `{field_N}` 和 `{field_N_name}` 占位符 |
+| `prompt_template` | string | Prompt 模板，占位符与字段键同名：`{field_a}` 或 `{keyan_name}`，加 `_name` 后缀引用字段名 |
 
 **Prompt 占位符说明**：
-- `{field_0}`, `{field_1}`, `{field_2}` ... 按索引引用字段值
-- `{field_0_name}`, `{field_1_name}` ... 按索引引用字段名
+- `{键}` 引用字段值，`{键_name}` 引用字段名
+- 键名由 `field_defs` 决定；未配置时是 `field_a`、`field_b`、`field_c`…
+- `match` 必须让模型输出 `true|false`，输出中文会被 `bool()` 判成 `True`
 - JSON 示例中的大括号要写成双重 `{{ }}`，否则 `.format()` 会报错
 
 **热加载机制**：
