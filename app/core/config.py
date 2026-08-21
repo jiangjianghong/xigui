@@ -20,6 +20,7 @@ import os
 import threading
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote_plus
 
 import yaml
 
@@ -141,3 +142,65 @@ def build_extra_body(model_cfg: dict[str, Any]) -> dict[str, Any]:
         "enable_thinking": enable_thinking,
         "chat_template_kwargs": {"enable_thinking": enable_thinking},
     }
+
+
+# ---------------------------------------------------------------------------
+# 数据库配置
+# ---------------------------------------------------------------------------
+
+_DB_DEFAULTS = {
+    "host": "127.0.0.1",
+    "port": 3306,
+    "database": "ai_cross_check",
+    "username": "root",
+    "password": "",
+    "charset": "utf8mb4",
+    "pool_size": 5,
+    "max_overflow": 10,
+    "echo": False,
+}
+
+
+def get_db_config() -> dict[str, Any]:
+    """读取 ``mysql:`` 节，环境变量 ``MYSQL_*`` 优先于配置文件。
+
+    分离字段而非单行连接串：改起来不易出错，也便于逐项做环境变量覆盖。
+    """
+    raw = get_config().get("mysql") or {}
+
+    def pick(key: str) -> Any:
+        env = os.getenv(f"MYSQL_{key.upper()}")
+        if env not in (None, ""):
+            return env
+        val = raw.get(key)
+        return val if val not in (None, "") else _DB_DEFAULTS[key]
+
+    return {
+        "host": str(pick("host")),
+        "port": int(pick("port")),
+        "database": str(pick("database")),
+        "username": str(pick("username")),
+        "password": str(pick("password")),
+        "charset": str(raw.get("charset") or _DB_DEFAULTS["charset"]),
+        "pool_size": int(raw.get("pool_size") or _DB_DEFAULTS["pool_size"]),
+        "max_overflow": int(raw.get("max_overflow") or _DB_DEFAULTS["max_overflow"]),
+        "echo": bool(raw.get("echo", False)),
+    }
+
+
+def build_db_url(*, with_database: bool = True) -> str:
+    """拼装 SQLAlchemy 连接串。
+
+    用户名密码必须过 ``quote_plus``——密码含 ``@`` ``:`` ``/`` ``#`` 任一字符时，
+    未编码的连接串会被解析错位，而报错通常指向「host 不存在」，极难定位。
+
+    ``with_database=False`` 用于建库前连到 server 本身。
+    """
+    c = get_db_config()
+    user = quote_plus(c["username"])
+    pwd = quote_plus(c["password"])
+    db = c["database"] if with_database else ""
+    return (
+        f"mysql+pymysql://{user}:{pwd}@{c['host']}:{c['port']}/{db}"
+        f"?charset={c['charset']}"
+    )
