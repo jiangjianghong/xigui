@@ -201,7 +201,7 @@ def build_db_url(*, with_database: bool = True) -> str:
 - [ ] **Step 6: 跑测试确认通过**
 
 Run: `uv run pytest tests/unit/test_db_config.py -v`
-Expected: 5 passed
+Expected: 4 passed
 
 - [ ] **Step 7: 提交**
 
