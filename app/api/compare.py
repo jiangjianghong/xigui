@@ -2,9 +2,13 @@
 
 业务流程：
 1. 按 ``rule_id`` 在最新规则列表（mtime 自动 reload）里查规则配置。
-2. 通过 registry 构造对应 ``Rule`` 实例，调 ``compare(a, b)``。
-3. 计算耗时，把 ``CompareResult`` 转 ``CompareResponse``。
-4. 异常按 plan 中的矩阵映射 HTTP 状态码。
+2. 由规则算出「有序合法字段键」，校验请求键与之完全相等（不等返 422）。
+3. 通过 registry 构造 ``LLMRule``，调 ``compare([(key, value, name), ...])``。
+4. 计算耗时，把 ``CompareResult`` 转 ``CompareResponse``，按同样的键平铺回显。
+5. 异常按矩阵映射 HTTP 状态码。
+
+字段键校验之所以在这里而不在 Pydantic 模型里，是因为键集合依赖 ``rule_id``
+查出的规则配置，而模型校验跑在路由函数体之前，那时还不知道是哪条规则。
 """
 
 from __future__ import annotations
@@ -17,6 +21,7 @@ from fastapi import APIRouter, HTTPException, status
 from app.core.config import get_rules
 from app.core.history import get_history_store
 from app.core.llm_client import LLMTimeout, LLMUpstreamError
+from app.rules.field_keys import field_keys_for
 from app.rules.registry import build_rule, should_require_field_name
 from app.schemas.compare import CompareRequest, CompareResponse, Cost
 
@@ -31,17 +36,38 @@ def _find_rule_cfg(rule_id: str) -> dict | None:
     return None
 
 
+def _validate_field_keys(rule_id: str, expected: list[str], got: set[str]) -> None:
+    """校验请求键与规则键集合完全相等。不等则抛 422。
+
+    少传、多传、拼错都在这里拦下——若放行,拼错的键会让模板占位符渲染成
+    字面量,LLM 拿到 ``{field_b}`` 这种垃圾输入却仍返回 200。
+    """
+    missing = [k for k in expected if k not in got]
+    unexpected = sorted(got - set(expected))
+    if not missing and not unexpected:
+        return
+    parts = []
+    if missing:
+        parts.append(f"缺少字段: {', '.join(missing)}")
+    if unexpected:
+        parts.append(f"不接受字段: {', '.join(unexpected)}")
+    detail = f"rule {rule_id} " + "；".join(parts)
+    if expected:
+        detail += f"（本规则需要: {', '.join(expected)}）"
+    log.warning("字段键不匹配 rule_id=%s %s", rule_id, detail)
+    raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=detail)
+
+
 @router.post(
     "/compare",
     response_model=CompareResponse,
-    summary="按指定规则比对两个字段",
+    response_model_exclude_none=True,
+    summary="按指定规则比对若干字段",
 )
 def compare(req: CompareRequest) -> CompareResponse:
     t0 = time.perf_counter()
-    log.info(
-        "收到比对请求 rule_id=%s fields=%d",
-        req.rule_id, len(req.fields),
-    )
+    inputs = req.field_inputs()
+    log.info("收到比对请求 rule_id=%s fields=%d", req.rule_id, len(inputs))
 
     rule_cfg = _find_rule_cfg(req.rule_id)
     if rule_cfg is None:
@@ -51,12 +77,15 @@ def compare(req: CompareRequest) -> CompareResponse:
             detail=f"rule_id 不存在: {req.rule_id}",
         )
 
+    expected_keys = field_keys_for(rule_cfg)
+    _validate_field_keys(req.rule_id, expected_keys, set(inputs))
+    # 校验已保证两者相等,按规则顺序排列
+    ordered = [(k, inputs[k]) for k in expected_keys]
+
     # 规则级别的 name 必填校验:仅当 yaml 显式 require_field_name=true 时生效。
     if should_require_field_name(rule_cfg):
         missing = [
-            f"fields[{i}].name"
-            for i, f in enumerate(req.fields)
-            if not (f.name or "").strip()
+            f"{key}.name" for key, f in ordered if not (f.name or "").strip()
         ]
         if missing:
             log.warning("rule %s 要求 name 必填,缺失: %s", req.rule_id, missing)
@@ -76,7 +105,7 @@ def compare(req: CompareRequest) -> CompareResponse:
         ) from e
 
     try:
-        res = rule.compare([(f.value, f.name) for f in req.fields])
+        res = rule.compare([(k, f.value, f.name) for k, f in ordered])
     except LLMTimeout as e:
         log.error("LLM 调用超时 rule_id=%s: %s", req.rule_id, e)
         raise HTTPException(
@@ -109,7 +138,7 @@ def compare(req: CompareRequest) -> CompareResponse:
     history.add({
         "rule_id": req.rule_id,
         "rule_name": rule_cfg.get("name", ""),
-        "fields": [f.model_dump() for f in req.fields],
+        "fields": [{"key": k, **f.model_dump()} for k, f in ordered],
         "result": res.match,
         "reason": res.reason,
         "time_ms": elapsed_ms,
@@ -123,5 +152,5 @@ def compare(req: CompareRequest) -> CompareResponse:
         reason=res.reason,
         time=elapsed_ms,
         cost=Cost(**(res.usage or {})),
-        fields=req.fields,
+        fields=dict(ordered),
     )

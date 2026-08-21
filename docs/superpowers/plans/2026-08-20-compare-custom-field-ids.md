@@ -1104,22 +1104,29 @@ grep -rn "req\.fields\|field_[0-9]" app/ tests/
 
 ```bash
 .venv/Scripts/python.exe -c "
-import sys,yaml,logging; sys.stdout.reconfigure(encoding='utf-8')
+import sys,yaml,re,logging; sys.stdout.reconfigure(encoding='utf-8')
 logging.basicConfig(level=logging.WARNING)
 from app.rules.llm_rule import LLMRule
 from app.rules.field_keys import field_keys_for
 rules=yaml.safe_load(open('config/rules.yaml',encoding='utf-8'))['rules']
+# 未替换的占位符 = 渲染后仍存在 {标识符} 形态。
+# 不能简单查 '{'：模板里 JSON 示例的 {{ }} 经 .format() 后本就变成单层 { }。
+LEFT=re.compile(r'\{[A-Za-z_][A-Za-z0-9_]*\}')
 bad=[]
 for r in rules:
     keys=field_keys_for(r)
+    if not keys:
+        bad.append((r['id'],'无字段键')); continue
     out=LLMRule(r)._render_user_prompt([(k,'V_'+k,'N_'+k) for k in keys])
-    if '{' in out.replace('{{','').replace('}}',''):
-        bad.append(r['id'])
-print('规则数:',len(rules),' 渲染后仍有未替换占位符的:',bad)
+    left=LEFT.findall(out)
+    if left: bad.append((r['id'],left))
+print('规则数:',len(rules))
+print('字段键个数分布:',{len(field_keys_for(r)) for r in rules})
+print('渲染异常:',bad)
 "
 ```
 
-预期：`规则数: 54  渲染后仍有未替换占位符的: []`。
+预期：`规则数: 54` / `字段键个数分布: {1, 2}` / `渲染异常: []`。
 
 - [ ] **Step 16: 跑 lint**
 
@@ -1128,7 +1135,18 @@ print('规则数:',len(rules),' 渲染后仍有未替换占位符的:',bad)
 .venv/Scripts/python.exe -m mypy app
 ```
 
-预期：ruff 报 `All checks passed!`。mypy 若对 `CompareResponse.__init__` 的 `**fields` 展开报 `arg-type`，在该行末尾加 `# type: ignore[arg-type]`。
+**既有 lint 债（改造前 HEAD 就存在，不在本次范围内，别顺手改）：**
+
+- ruff `Found 3 errors`，全是 F401 未使用 import：`app/core/rules_io.py:77` 的 `CommentedSeq`、`app/main.py:15` 的 `Path`、`tests/integration/test_admin_rules.py:21` 的 `rules_io`
+- mypy `Found 1 error`：`app/core/config.py:24` 缺 PyYAML 的 type stubs
+
+判断本次改动是否干净，用范围限定的命令：
+
+```bash
+.venv/Scripts/python.exe -m ruff check app/schemas/compare.py app/api/compare.py app/rules/ tests/unit/ tests/integration/test_compare_api.py
+```
+
+预期：`All checks passed!`。mypy 除上述既有 error 外不应新增。`CompareResponse.__init__` 需标注为 `def __init__(self, **data: Any) -> None:`（并 `from typing import Any`），否则 mypy 会提 `annotation-unchecked` note。
 
 - [ ] **Step 17: 提交**
 

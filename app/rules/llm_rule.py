@@ -13,19 +13,12 @@ from typing import Any
 
 from app.core.llm_client import chat_json
 from app.rules.base import CompareResult
+from app.rules.field_keys import FALLBACK_TEMPLATE
 
 log = logging.getLogger("aicheck.rules.llm")
 
 # 兜底:当模型没严格输出纯 JSON 时,从一段文本里挖第一个 {...} 块
 _JSON_BLOCK_RE = re.compile(r"\{[\s\S]*\}")
-
-# 没有 prompt_template 时的最后兜底,避免崩溃
-_FALLBACK_TEMPLATE = (
-    "请判断以下字段在语义上是否一致。\n"
-    "A: {field_0}\n"
-    "B: {field_1}\n"
-    '严格输出 JSON: {{"match": true|false, "reason": "<不超过30字>"}}'
-)
 
 
 def _parse_llm_json(content: str) -> dict[str, Any] | None:
@@ -51,8 +44,8 @@ class LLMRule:
     构造时接受 ``rules.yaml`` 中的整条规则配置。``compare`` 拿到字段列表,
     渲染 prompt 后调用 LLM,返回 ``CompareResult``。
 
-    prompt_template 中使用 ``{field_0}`` ``{field_1}`` ... 按索引引用字段值,
-    ``{field_0_name}`` ``{field_1_name}`` ... 引用字段名。
+    prompt_template 中用 ``{键}`` 引用字段值、``{键_name}`` 引用字段名,
+    键名由规则的 field_defs 决定,未配则是 ``field_a`` ``field_b`` ...
     """
 
     def __init__(self, cfg: dict[str, Any]):
@@ -60,36 +53,28 @@ class LLMRule:
         self.id: str = cfg["id"]
         self.name: str = cfg.get("name", "")
         self.system_prompt: str = cfg.get("system_prompt") or ""
-        self.prompt_template: str = cfg.get("prompt_template") or _FALLBACK_TEMPLATE
+        self.prompt_template: str = cfg.get("prompt_template") or FALLBACK_TEMPLATE
 
-    def _render_user_prompt(
-        self,
-        fields: list[tuple[str, str | None]],
-    ) -> str:
+    def _render_user_prompt(self, fields: list[tuple[str, str, str | None]]) -> str:
         """渲染 prompt_template。
 
-        ``fields`` 为 ``[(value, name), ...]`` 列表。
-        构建 ``{field_0}`` ``{field_0_name}`` ... 等占位符的替换字典。
-        name 缺失时占位空串。
+        ``fields`` 为 ``[(key, value, name), ...]``,key 即请求里的字段键。
+        每个字段注入 ``{key}`` 与 ``{key_name}`` 两个占位符,name 缺失时占位空串。
         """
         replacements: dict[str, str] = {}
-        for i, (value, name) in enumerate(fields):
-            replacements[f"field_{i}"] = value
-            replacements[f"field_{i}_name"] = name or ""
+        for key, value, name in fields:
+            replacements[key] = value
+            replacements[f"{key}_name"] = name or ""
         try:
             return self.prompt_template.format(**replacements)
         except (KeyError, IndexError) as e:
             log.warning("prompt_template 渲染失败 rule_id=%s err=%s", self.id, e)
             return self.prompt_template
 
-    def compare(
-        self,
-        fields: list[tuple[str, str | None]],
-    ) -> CompareResult:
+    def compare(self, fields: list[tuple[str, str, str | None]]) -> CompareResult:
         """执行比对。
 
-        ``fields`` 为 ``[(value, name), ...]`` 列表,
-        与请求中 ``fields`` 数组一一对应。
+        ``fields`` 为 ``[(key, value, name), ...]``,与请求里的字段键一一对应。
         """
         user_prompt = self._render_user_prompt(fields)
         messages: list[dict[str, Any]] = []

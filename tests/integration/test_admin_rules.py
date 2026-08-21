@@ -73,9 +73,9 @@ def test_get_single_rule(client, isolated_rules):
     body = resp.json()
     assert body["id"] == "R004"
     assert body["require_field_name"] is True
-    assert "{field_0_name}" in body["prompt_template"]
+    assert "{danwei_shenbao_name}" in body["prompt_template"]
     # field_defs 读路径:yaml 落盘 → GET 读出
-    assert body["field_defs"] == ["建设单位A", "建设单位B"]
+    assert body["field_defs"] == ["danwei_shenbao", "danwei_pifu"]
 
 
 def test_get_unknown_rule_returns_404(client, isolated_rules):
@@ -93,7 +93,7 @@ NEW_RULE = {
     "description": "集成测试用",
     "require_field_name": False,
     "system_prompt": "你是测试专家。",
-    "prompt_template": "A:{field_0} B:{field_1} JSON:{{\"match\":true,\"reason\":\"\"}}",
+    "prompt_template": "A:{field_a} B:{field_b} JSON:{{\"match\":true,\"reason\":\"\"}}",
 }
 
 
@@ -134,7 +134,7 @@ def test_create_missing_prompt_template_returns_422(client, isolated_rules):
 
 def test_update_rule(client, isolated_rules):
     payload = dict(NEW_RULE, id="R001", name="改后名字",
-                   prompt_template="新模板 A:{field_0} B:{field_1}")
+                   prompt_template="新模板 A:{field_a} B:{field_b}")
     resp = client.put("/admin/rules/R001", json=payload)
     assert resp.status_code == 200
     assert resp.json()["rule_id"] == "R001"
@@ -229,7 +229,8 @@ def test_create_then_compare_uses_new_rule(client, isolated_rules, monkeypatch):
     # 比对
     resp = client.post("/compare", json={
         "rule_id": "R999",
-        "fields": [{"value": "v1"}, {"value": "v2"}],
+        "field_a": {"value": "v1"},
+        "field_b": {"value": "v2"},
     })
     assert resp.status_code == 200
     assert resp.json()["result"] is True
@@ -246,18 +247,18 @@ def test_create_then_compare_uses_new_rule(client, isolated_rules, monkeypatch):
 
 def test_create_rule_with_field_defs(client, isolated_rules):
     """带 field_defs 创建 → 读取/落盘往返一致。"""
-    payload = dict(NEW_RULE, field_defs=["申报金额", "批复金额", "合同金额"])
+    payload = dict(NEW_RULE, field_defs=["shenbao_amount", "pifu_amount", "hetong_amount"])
     resp = client.post("/admin/rules", json=payload)
     assert resp.status_code == 201
 
     body = client.get("/admin/rules/R999").json()
-    assert body["field_defs"] == ["申报金额", "批复金额", "合同金额"]
+    assert body["field_defs"] == ["shenbao_amount", "pifu_amount", "hetong_amount"]
 
     # yaml 文件里也确实写进去了
     with isolated_rules.open("r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
     saved = next(r for r in data["rules"] if r["id"] == "R999")
-    assert saved["field_defs"] == ["申报金额", "批复金额", "合同金额"]
+    assert saved["field_defs"] == ["shenbao_amount", "pifu_amount", "hetong_amount"]
 
 
 def test_create_rule_without_field_defs_omits_key(client, isolated_rules):
@@ -272,13 +273,13 @@ def test_create_rule_without_field_defs_omits_key(client, isolated_rules):
 def test_update_rule_field_defs(client, isolated_rules):
     """PUT 可以更新 field_defs。"""
     create = client.post(
-        "/admin/rules", json=dict(NEW_RULE, field_defs=["甲", "乙"])
+        "/admin/rules", json=dict(NEW_RULE, field_defs=["jia", "yi"])
     )
     assert create.status_code == 201
 
-    payload = dict(NEW_RULE, field_defs=["甲", "乙", "丙"])
+    payload = dict(NEW_RULE, field_defs=["jia", "yi", "bing"])
     resp = client.put("/admin/rules/R999", json=payload)
     assert resp.status_code == 200
 
     after = client.get("/admin/rules/R999").json()
-    assert after["field_defs"] == ["甲", "乙", "丙"]
+    assert after["field_defs"] == ["jia", "yi", "bing"]

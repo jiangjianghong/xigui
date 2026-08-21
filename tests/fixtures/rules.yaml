@@ -10,10 +10,13 @@
 #                          (建议每条规则都显式写出来,不依赖默认值)
 #   system_prompt          LLM 的系统提示。建议每条规则按自身领域显式声明;
 #                          留空(空字符串)则不向模型发送 system 消息。
+#   field_defs             可选。自定义字段 ID 列表,决定本规则请求体里的字段键。
+#                          不写/为空则用默认的 field_a / field_b / ...
 #   prompt_template        Prompt 模板。所有规则的判定标准都由这里描述。
-#                          支持占位符(按请求中 fields 数组的索引):
-#                            {field_0} {field_1} {field_2} ...   字段值
-#                            {field_0_name} {field_1_name} ...   字段名
+#                          占位符与请求里的字段键一一对应:
+#                            {field_a} {field_b} ...          字段值(默认键)
+#                            {field_a_name} {field_b_name}    字段名
+#                          配了 field_defs 时改用自定义 ID,如 {danwei_shenbao}
 #                          注意:JSON 示例里的大括号要写成双重 {{ }},否则 .format 会报错。
 #
 # 注意:本文件是 tests/ 专用 fixture(固定为 R001-R005 共 5 条),
@@ -33,8 +36,8 @@ rules:
       允许差异:首尾空白、大小写差异、全角/半角符号差异。
       不允许差异:任何字符、数字、连字符位置的差异。
 
-      A: {field_0}
-      B: {field_1}
+      A: {field_a}
+      B: {field_b}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
@@ -53,8 +56,8 @@ rules:
       不允许差异:数值有任何实际差异(即使 0.01 元)。如无法可靠换算到统一单位,
       判为不一致。
 
-      A: {field_0}
-      B: {field_1}
+      A: {field_a}
+      B: {field_b}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由,需说明换算后的金额>"}}
@@ -62,7 +65,7 @@ rules:
   # --- R003: 批复时间早于申报时间 ---
   - id: "R003"
     name: "批复时间早于申报时间"
-    description: "判断 fields[0] 的日期是否严格早于 fields[1]"
+    description: "判断 field_a 的日期是否严格早于 field_b"
     require_field_name: false
     system_prompt: "你是熟悉政府项目审批流程的合规审核员,擅长解析各类中文日期写法并比较先后,输出严格遵守约定格式。"
     prompt_template: |
@@ -71,30 +74,31 @@ rules:
       常见的日期格式:"2024年1月10日"、"2024-01-10"、"2024/01/10"、"二零二四年一月十日" 等。
       若两个日期相等,或 A 晚于 B,或任一日期无法解析,均判为不一致。
 
-      A (批复时间): {field_0}
-      B (申报时间): {field_1}
+      A (批复时间): {field_a}
+      B (申报时间): {field_b}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由,需说明解析后的两个日期>"}}
 
   # --- R004: 建设单位名称基本一致 ---
-  # prompt_template 引用 {field_0_name}/{field_1_name},因此 require_field_name=true,
-  # 上游接口必须传 fields[0].name / fields[1].name,否则返 422。
+  # 本规则是「自定义字段 ID」的测试载体:field_defs 声明了两个 slug,
+  # 请求体必须用 danwei_shenbao / danwei_pifu 作键,传 field_a 会返 422。
+  # prompt_template 同时引用 {danwei_shenbao_name},因此 require_field_name=true。
   - id: "R004"
     name: "建设单位名称基本一致"
     description: "容忍简称/全称/前后缀差异;把字段名注入 prompt,让 LLM 知道在判什么"
-    field_defs: ["建设单位A", "建设单位B"]
+    field_defs: ["danwei_shenbao", "danwei_pifu"]
     require_field_name: true
     system_prompt: "你是熟悉企业法人主体识别的合规审核员,能区分简称、全称、行政区划前缀、母公司与分支机构,输出严格遵守约定格式。"
     prompt_template: |
-      请判断字段"{field_0_name}"与字段"{field_1_name}"的两个值是否指向同一个法人主体。
+      请判断字段"{danwei_shenbao_name}"与字段"{danwei_pifu_name}"的两个值是否指向同一个法人主体。
 
       允许差异:简称与全称、有/无行政区划前缀、"有限公司"与"有限责任公司"互换、
       集团/分公司层级差异(如"XX集团" 与 "XX集团北京分公司"视为不同主体)。
       不允许差异:名称中关键字明显不同(如"中铁"与"中建")。
 
-      A ({field_0_name}): {field_0}
-      B ({field_1_name}): {field_1}
+      A ({danwei_shenbao_name}): {danwei_shenbao}
+      B ({danwei_pifu_name}): {danwei_pifu}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过30字的中文理由>"}}
@@ -112,8 +116,8 @@ rules:
       与"道路建设:5km")。
       不允许差异:任一段多出或缺少任何子项目,或子项目的数量/规格/面积有差异。
 
-      A: {field_0}
-      B: {field_1}
+      A: {field_a}
+      B: {field_b}
 
       严格按 JSON 输出,不要任何额外说明:
       {{"match": true|false, "reason": "<不超过50字的中文理由,需点明差异项(如有)>"}}

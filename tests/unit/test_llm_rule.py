@@ -17,7 +17,7 @@ _USAGE = {"prompt_tokens": 12, "completion_tokens": 4, "total_tokens": 16}
 _CFG = {
     "id": "T_LLM",
     "name": "test rule",
-    "prompt_template": "A: {field_0}\nB: {field_1}\n输出 JSON。",
+    "prompt_template": "A: {field_a}\nB: {field_b}\n输出 JSON。",
 }
 
 
@@ -36,7 +36,7 @@ def fake_chat(monkeypatch):
 def test_llm_rule_parses_json(fake_chat):
     fake_chat["content"] = '{"match": true, "reason": "同一公司不同简称"}'
     rule = build_rule(_CFG)
-    res = rule.compare([("贵州省XX建设有限公司", None), ("XX建设公司", None)])
+    res = rule.compare([("field_a", "贵州省XX建设有限公司", None), ("field_b", "XX建设公司", None)])
     assert res.match is True
     assert "同一公司" in res.reason
     assert res.usage == _USAGE
@@ -44,14 +44,14 @@ def test_llm_rule_parses_json(fake_chat):
 
 def test_llm_rule_mismatch(fake_chat):
     fake_chat["content"] = '{"match": false, "reason": "明显是两家公司"}'
-    res = build_rule(_CFG).compare([("A公司", None), ("B集团", None)])
+    res = build_rule(_CFG).compare([("field_a", "A公司", None), ("field_b", "B集团", None)])
     assert res.match is False
     assert "明显" in res.reason
 
 
 def test_invalid_json_fallback(fake_chat):
     fake_chat["content"] = "我觉得这两家基本一致。"
-    res = build_rule(_CFG).compare([("A", None), ("B", None)])
+    res = build_rule(_CFG).compare([("field_a", "A", None), ("field_b", "B", None)])
     assert res.match is False
     assert "非法 JSON" in res.reason
     # usage 仍要带回,便于审计
@@ -61,7 +61,7 @@ def test_invalid_json_fallback(fake_chat):
 def test_json_inside_text_recovered(fake_chat):
     # 模型偶发会加 ```json 包裹,确保兜底正则能挖出来
     fake_chat["content"] = '好的,结果是 {"match": true, "reason": "ok"} 。'
-    res = build_rule(_CFG).compare([("A", None), ("A", None)])
+    res = build_rule(_CFG).compare([("field_a", "A", None), ("field_b", "A", None)])
     assert res.match is True
     assert res.reason == "ok"
 
@@ -72,13 +72,13 @@ def test_timeout_bubbles_up(fake_chat, monkeypatch):
 
     monkeypatch.setattr(llm_rule, "chat_json", _boom)
     with pytest.raises(LLMTimeout):
-        build_rule(_CFG).compare([("A", None), ("B", None)])
+        build_rule(_CFG).compare([("field_a", "A", None), ("field_b", "B", None)])
 
 
 def test_name_placeholders_rendered(monkeypatch):
     cfg = {
         "id": "T_NAME",
-        "prompt_template": "判断字段 {field_0_name} 与 {field_1_name}: A={field_0} B={field_1}",
+        "prompt_template": "判断字段 {field_a_name} 与 {field_b_name}: A={field_a} B={field_b}",
     }
     captured = {}
 
@@ -87,7 +87,7 @@ def test_name_placeholders_rendered(monkeypatch):
         return '{"match": true, "reason": "ok"}', _USAGE
 
     monkeypatch.setattr(llm_rule, "chat_json", _capture)
-    build_rule(cfg).compare([("v1", "项目代码"), ("v2", "编号")])
+    build_rule(cfg).compare([("field_a", "v1", "项目代码"), ("field_b", "v2", "编号")])
 
     rendered = captured["messages"][-1]["content"]
     assert "项目代码" in rendered
@@ -104,8 +104,8 @@ def test_should_require_field_name_explicit_false():
 
 
 def test_should_require_field_name_missing_defaults_false():
-    """未配置时默认 False(不校验);即使 prompt_template 含 {field_0_name} 也不会自动推导。"""
-    cfg = {"id": "X", "prompt_template": "判断 {field_0_name}: {field_0} vs {field_1}"}
+    """未配置时默认 False(不校验);即使 prompt_template 含 {field_a_name} 也不会自动推导。"""
+    cfg = {"id": "X", "prompt_template": "判断 {field_a_name}: {field_a} vs {field_b}"}
     assert should_require_field_name(cfg) is False
 
 
@@ -114,7 +114,7 @@ def test_system_prompt_explicit_sent(monkeypatch):
     cfg = {
         "id": "T_SYS",
         "system_prompt": "你是测试专家。",
-        "prompt_template": "A:{field_0} B:{field_1}",
+        "prompt_template": "A:{field_a} B:{field_b}",
     }
     captured: dict = {}
 
@@ -123,7 +123,7 @@ def test_system_prompt_explicit_sent(monkeypatch):
         return '{"match": true, "reason": "ok"}', _USAGE
 
     monkeypatch.setattr(llm_rule, "chat_json", _capture)
-    build_rule(cfg).compare([("a", None), ("b", None)])
+    build_rule(cfg).compare([("field_a", "a", None), ("field_b", "b", None)])
 
     msgs = captured["messages"]
     assert msgs[0]["role"] == "system"
@@ -135,7 +135,7 @@ def test_system_prompt_empty_omits_system_message(monkeypatch):
     """system_prompt 缺失或为空时,messages 中不应有 system 角色消息。"""
     cfg = {
         "id": "T_NOSYS",
-        "prompt_template": "A:{field_0} B:{field_1}",
+        "prompt_template": "A:{field_a} B:{field_b}",
     }
     captured: dict = {}
 
@@ -144,8 +144,33 @@ def test_system_prompt_empty_omits_system_message(monkeypatch):
         return '{"match": true, "reason": "ok"}', _USAGE
 
     monkeypatch.setattr(llm_rule, "chat_json", _capture)
-    build_rule(cfg).compare([("a", None), ("b", None)])
+    build_rule(cfg).compare([("field_a", "a", None), ("field_b", "b", None)])
 
     msgs = captured["messages"]
     assert len(msgs) == 1
     assert msgs[0]["role"] == "user"
+def test_render_with_custom_id_keys():
+    """自定义 ID 键:模板用 {keyan_name} 而非 {field_a}。"""
+    from app.rules.llm_rule import LLMRule
+
+    rule = LLMRule({
+        "id": "CUSTOM",
+        "prompt_template": "可研:{keyan_name} 咨评:{zixun_name}",
+    })
+    out = rule._render_user_prompt([
+        ("keyan_name", "XX供水工程", None),
+        ("zixun_name", "XX供水项目", None),
+    ])
+    assert out == "可研:XX供水工程 咨评:XX供水项目"
+
+
+def test_render_custom_id_name_placeholder():
+    """{键_name} 引用字段名,即使键本身以 _name 结尾也能区分。"""
+    from app.rules.llm_rule import LLMRule
+
+    rule = LLMRule({
+        "id": "CUSTOM",
+        "prompt_template": "{keyan_name_name}={keyan_name}",
+    })
+    out = rule._render_user_prompt([("keyan_name", "值", "可研项目名称")])
+    assert out == "可研项目名称=值"
