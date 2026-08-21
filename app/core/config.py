@@ -12,6 +12,8 @@
 2. 新增 ``get_rules()`` 和 ``reload_rules()``，专门服务规则配置。
 3. ``build_extra_body()`` 保留原样，用于在 dashscope / vllm 两种后端之间
    屏蔽 ``enable_thinking`` 传参形式的差异。
+4. 新增 ``get_db_config()`` 和 ``build_db_url()``，读取 ``mysql:`` 节并拼装
+   SQLAlchemy 连接串，供 ORM 引擎与建库脚本共用。
 """
 
 from __future__ import annotations
@@ -20,7 +22,7 @@ import os
 import threading
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote_plus
+from urllib.parse import quote
 
 import yaml
 
@@ -148,7 +150,7 @@ def build_extra_body(model_cfg: dict[str, Any]) -> dict[str, Any]:
 # 数据库配置
 # ---------------------------------------------------------------------------
 
-_DB_DEFAULTS = {
+_DB_DEFAULTS: dict[str, Any] = {
     "host": "127.0.0.1",
     "port": 3306,
     "database": "ai_cross_check",
@@ -162,18 +164,25 @@ _DB_DEFAULTS = {
 
 
 def get_db_config() -> dict[str, Any]:
-    """读取 ``mysql:`` 节，环境变量 ``MYSQL_*`` 优先于配置文件。
+    """读取 ``mysql:`` 节，缺项回落到 ``_DB_DEFAULTS``。
+
+    其中 ``host`` ``port`` ``database`` ``username`` ``password`` 这五项额外支持
+    同名环境变量覆盖（``MYSQL_HOST`` 等），优先级高于配置文件——这几项是跨环境
+    部署时真正会变的。其余四项只读配置文件。
 
     分离字段而非单行连接串：改起来不易出错，也便于逐项做环境变量覆盖。
     """
     raw = get_config().get("mysql") or {}
 
-    def pick(key: str) -> Any:
-        env = os.getenv(f"MYSQL_{key.upper()}")
-        if env not in (None, ""):
-            return env
+    def take(key: str) -> Any:
+        """yaml → 默认值。"""
         val = raw.get(key)
         return val if val not in (None, "") else _DB_DEFAULTS[key]
+
+    def pick(key: str) -> Any:
+        """环境变量 → yaml → 默认值。"""
+        env = os.getenv(f"MYSQL_{key.upper()}")
+        return env if env not in (None, "") else take(key)
 
     return {
         "host": str(pick("host")),
@@ -181,24 +190,31 @@ def get_db_config() -> dict[str, Any]:
         "database": str(pick("database")),
         "username": str(pick("username")),
         "password": str(pick("password")),
-        "charset": str(raw.get("charset") or _DB_DEFAULTS["charset"]),
-        "pool_size": int(raw.get("pool_size") or _DB_DEFAULTS["pool_size"]),
-        "max_overflow": int(raw.get("max_overflow") or _DB_DEFAULTS["max_overflow"]),
-        "echo": bool(raw.get("echo", False)),
+        "charset": str(take("charset")),
+        "pool_size": int(take("pool_size")),
+        "max_overflow": int(take("max_overflow")),
+        "echo": bool(take("echo")),
     }
 
 
 def build_db_url(*, with_database: bool = True) -> str:
     """拼装 SQLAlchemy 连接串。
 
-    用户名密码必须过 ``quote_plus``——密码含 ``@`` ``:`` ``/`` ``#`` 任一字符时，
-    未编码的连接串会被解析错位，而报错通常指向「host 不存在」，极难定位。
+    用户名密码必须过 ``quote``——含 ``@`` ``:`` ``/`` ``#`` 任一字符时，未编码的
+    连接串会被解析错位，而报错通常指向「host 不存在」，极难定位。
+
+    这里用 ``quote(x, safe="")`` 而非 ``quote_plus``：后者把空格编成 ``+``，而
+    SQLAlchemy 解析 URL 时用的是 ``unquote`` 不是 ``unquote_plus``，``+`` 会原样
+    留在密码里，认证报 Access denied，配置文件却看着完全正常。
+
+    返回值含明文密码，**不要直接打进日志**；需要打印时走
+    ``make_url(url).render_as_string(hide_password=True)``。
 
     ``with_database=False`` 用于建库前连到 server 本身。
     """
     c = get_db_config()
-    user = quote_plus(c["username"])
-    pwd = quote_plus(c["password"])
+    user = quote(c["username"], safe="")
+    pwd = quote(c["password"], safe="")
     db = c["database"] if with_database else ""
     return (
         f"mysql+pymysql://{user}:{pwd}@{c['host']}:{c['port']}/{db}"
