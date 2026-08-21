@@ -1235,6 +1235,15 @@ from pydantic import field_validator
 
 （`field_validator` 加进已有的 `from pydantic import ...` 行。）
 
+在 `log = logging.getLogger("aicheck.admin.rules")` 下方加模块级常量：
+
+```python
+# 字段 ID 的合法形态。放模块级而非 RuleIn 类体内——Pydantic v2 会把类体里
+# 以下划线开头的属性包成 ModelPrivateAttr，validator 里再取就不是 Pattern 了
+# （报 "'ModelPrivateAttr' object has no attribute 'match'"）。
+_FIELD_ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+```
+
 在 `RuleIn` 类里，把 `field_defs` 的定义改为：
 
 ```python
@@ -1248,11 +1257,18 @@ from pydantic import field_validator
     )
 ```
 
+顺带把 `prompt_template` 的 description 改为：
+
+```python
+    prompt_template: str = Field(
+        ..., min_length=1,
+        description="prompt 模板,占位符与字段键同名:{field_a} 或 {keyan_name},加 _name 后缀引用字段名",
+    )
+```
+
 并在 `RuleIn` 类体内追加 validator：
 
 ```python
-    _ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
     @field_validator("field_defs")
     @classmethod
     def _check_field_defs(cls, v: list[str] | None) -> list[str] | None:
@@ -1261,7 +1277,7 @@ from pydantic import field_validator
             return v
         seen: set[str] = set()
         for item in v:
-            if not cls._ID_RE.match(item or ""):
+            if not _FIELD_ID_RE.match(item or ""):
                 raise ValueError(
                     f"field_defs 元素非法: {item!r}，"
                     "须匹配 ^[A-Za-z_][A-Za-z0-9_]*$（字母或下划线开头，只含字母数字下划线）"

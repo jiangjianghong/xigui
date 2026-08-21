@@ -283,3 +283,36 @@ def test_update_rule_field_defs(client, isolated_rules):
 
     after = client.get("/admin/rules/R999").json()
     assert after["field_defs"] == ["jia", "yi", "bing"]
+# ---------------------------------------------------------------------------
+# field_defs 合法性校验
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("bad_defs, why", [
+    (["建设单位A", "建设单位B"], "中文不能当 JSON 键"),
+    (["", ""], "空串"),
+    (["has space", "b"], "含空格"),
+    (["1abc", "b"], "数字开头"),
+    (["a-b", "c"], "含连字符"),
+    (["same", "same"], "规则内重复"),
+    (["rule_id", "b"], "占用顶层保留字"),
+])
+def test_invalid_field_defs_rejected(client, isolated_rules, bad_defs, why):
+    resp = client.post("/admin/rules", json=dict(NEW_RULE, field_defs=bad_defs))
+    assert resp.status_code == 422, f"{why} 应被拒绝: {bad_defs}"
+
+
+@pytest.mark.parametrize("good_defs", [
+    ["keyan_name", "zixun_name"],
+    ["_leading_underscore", "b"],
+    ["a1", "b2"],
+    ["ONE", "two"],
+])
+def test_valid_field_defs_accepted(client, isolated_rules, good_defs):
+    resp = client.post("/admin/rules", json=dict(NEW_RULE, field_defs=good_defs))
+    assert resp.status_code in (200, 201), resp.text
+
+
+def test_empty_field_defs_accepted(client, isolated_rules):
+    """空列表 = 不启用自定义 ID,合法。"""
+    resp = client.post("/admin/rules", json=dict(NEW_RULE, field_defs=[]))
+    assert resp.status_code in (200, 201), resp.text

@@ -12,10 +12,11 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.config import PROJECT_ROOT, get_config, reload_rules
 from app.core.rules_io import (
@@ -28,6 +29,10 @@ from app.core.rules_io import (
 
 router = APIRouter(tags=["admin-rules"])
 log = logging.getLogger("aicheck.admin.rules")
+
+# 字段 ID 的合法形态。放模块级而非 RuleIn 类体内——Pydantic v2 会把类体里
+# 以下划线开头的属性包成 ModelPrivateAttr，validator 里再取就不是 Pattern 了。
+_FIELD_ID_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 # ---------------------------------------------------------------------------
@@ -42,7 +47,11 @@ class RuleIn(BaseModel):
     description: str | None = Field(default="", description="规则描述,仅文档用")
     field_defs: list[str] | None = Field(
         default=None,
-        description="字段定义列表,下标即 {field_N} 占位符下标,元素为字段业务名(可为空串)",
+        description=(
+            "自定义字段 ID 列表,决定本规则请求体里的字段键。"
+            "不写/为空则用默认的 field_a/field_b/...。"
+            "元素须匹配 ^[A-Za-z_][A-Za-z0-9_]*$、规则内不重复、不得为 rule_id"
+        ),
     )
     require_field_name: bool = Field(
         default=False,
@@ -54,8 +63,28 @@ class RuleIn(BaseModel):
     )
     prompt_template: str = Field(
         ..., min_length=1,
-        description="prompt 模板,支持占位符 {field_0}/{field_1}/.../{field_0_name}/...",
+        description="prompt 模板,占位符与字段键同名:{field_a} 或 {keyan_name},加 _name 后缀引用字段名",
     )
+
+    @field_validator("field_defs")
+    @classmethod
+    def _check_field_defs(cls, v: list[str] | None) -> list[str] | None:
+        """字段 ID 会直接成为请求体的 JSON 键,必须是合法标识符且不撞保留字。"""
+        if not v:
+            return v
+        seen: set[str] = set()
+        for item in v:
+            if not _FIELD_ID_RE.match(item or ""):
+                raise ValueError(
+                    f"field_defs 元素非法: {item!r}，"
+                    "须匹配 ^[A-Za-z_][A-Za-z0-9_]*$（字母或下划线开头，只含字母数字下划线）"
+                )
+            if item == "rule_id":
+                raise ValueError("field_defs 不能包含 rule_id，它是请求体顶层保留字")
+            if item in seen:
+                raise ValueError(f"field_defs 元素重复: {item!r}")
+            seen.add(item)
+        return v
 
 
 class RuleOut(RuleIn):
