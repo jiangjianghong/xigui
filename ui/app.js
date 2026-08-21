@@ -144,10 +144,9 @@ function fillForm(r) {
     document.getElementById('f-system').value = r.system_prompt || '';
     document.getElementById('f-prompt').value = r.prompt_template || '';
 
-    // 字段定义:优先 field_defs;旧规则从模板反推个数,字段名留空。
-    // field_defs 比模板占位符少时(手改 yaml),按占位符补齐空名行,暴露不一致。
-    const m = (r.prompt_template || '').match(/\{field_(\d+)(?:_name)?\}/g);
-    const inferred = m ? Math.max(...m.map(s => parseInt(s.match(/\d+/)[0]))) + 1 : 0;
+    // 字段行:优先 field_defs(自定义 ID);没配则按模板反推个数,ID 留空表示用字母键。
+    // field_defs 比模板占位符少时(手改 yaml),按占位符补齐空行,暴露不一致。
+    const inferred = inferKeyCount(r.prompt_template);
     let defs = Array.isArray(r.field_defs) && r.field_defs.length ? [...r.field_defs] : [];
     if (!defs.length) {
         defs = Array.from({length: inferred || 2}, () => '');
@@ -178,29 +177,47 @@ async function saveRule() {
     if (!payload.id) { toast('id 不能为空', 'error'); return; }
     if (!payload.prompt_template.trim()) { toast('prompt_template 不能为空', 'error'); return; }
 
-    // 字段定义校验
-    const defCount = payload.field_defs.length;
-    const phMatches = payload.prompt_template.match(/\{field_(\d+)(?:_name)?\}/g) || [];
-    const maxIdx = phMatches.length
-        ? Math.max(...phMatches.map(s => parseInt(s.match(/\d+/)[0]))) : -1;
-    if (maxIdx >= defCount) {
-        toast(`模板引用了 {field_${maxIdx}},但只定义了 ${defCount} 个字段(最大下标 ${defCount - 1})`, 'error');
+    // 字段 ID 校验(与后端 admin_rules._check_field_defs 同规则)
+    const rawDefs = payload.field_defs;
+    const ID_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+    const filled = rawDefs.filter(s => s);
+    // 要么全填(自定义 ID),要么全空(用字母键),不允许一半一半
+    if (filled.length && filled.length !== rawDefs.length) {
+        toast('字段 ID 要么全部填写,要么全部留空(留空则用 field_a/field_b/...)', 'error');
         return;
     }
-    if (payload.require_field_name && payload.field_defs.some(n => !n)) {
-        toast('require_field_name=true 时,所有字段名必填', 'error');
+    for (const id of filled) {
+        if (!ID_RE.test(id)) {
+            toast(`字段 ID "${id}" 非法:须字母或下划线开头,只含字母数字下划线`, 'error');
+            return;
+        }
+        if (id === 'rule_id') {
+            toast('字段 ID 不能叫 rule_id,它是请求体顶层保留字', 'error');
+            return;
+        }
+    }
+    if (new Set(filled).size !== filled.length) {
+        toast('字段 ID 不能重复', 'error');
         return;
     }
-    // 定义了但模板没用上 → 非阻断提醒
-    const usedIdx = new Set(phMatches.map(s => parseInt(s.match(/\d+/)[0])));
-    const unused = payload.field_defs
-        .map((n, i) => usedIdx.has(i) ? null : `{field_${i}}${n ? `(${n})` : ''}`)
-        .filter(Boolean);
-    if (unused.length && !confirm(`以下字段已定义但模板未引用:${unused.join('、')}。确认继续保存吗?`)) return;
+    // 全空则不写 field_defs,让后端走字母键分支
+    payload.field_defs = filled.length ? filled : undefined;
 
-    // 友好提示:模板用了 {field_N_name} 但没勾 require_field_name
-    if (/\{field_\d+_name\}/.test(payload.prompt_template) && !payload.require_field_name) {
-        if (!confirm('prompt_template 引用了 {field_N_name},但 require_field_name 是 false,LLM 将拿到空字符串。确认继续吗?')) return;
+    // 定义了但模板没引用 → 非阻断提醒
+    const keys = rawDefs.map((_, i) => keyOf(rawDefs, i));
+    const usedKeys = new Set();
+    for (const s of payload.prompt_template.match(/\{[A-Za-z_][A-Za-z0-9_]*\}/g) || []) {
+        const inner = s.slice(1, -1);
+        usedKeys.add(inner);   // {keyan_name} 本身可能就是字段 ID
+        // 也可能是 {键_name} 形态。两种都记,宁可漏报也不误报
+        if (inner.endsWith('_name')) usedKeys.add(inner.slice(0, -5));
+    }
+    const unused = keys.filter(k => !usedKeys.has(k));
+    if (unused.length && !confirm(`以下字段已定义但模板未引用:${unused.map(k => `{${k}}`).join('、')}。确认继续保存吗?`)) return;
+
+    // 友好提示:模板用了 {键_name} 但没勾 require_field_name
+    if (/\{[A-Za-z_][A-Za-z0-9_]*_name\}/.test(payload.prompt_template) && !payload.require_field_name) {
+        if (!confirm('prompt_template 引用了 {键_name},但 require_field_name 是 false,LLM 将拿到空字符串。确认继续吗?')) return;
     }
 
     // 编辑模式下 id 改了 = rename,提醒下游缓存风险
@@ -231,6 +248,21 @@ async function saveRule() {
 // 字段定义区(modal)
 // ---------------------------------------------------------------------------
 
+// 与后端 app/rules/field_keys.py 同源:由 field_defs + 模板推出有序字段键。
+// defs[i] 非空则用它,否则用 field_a/field_b/...
+function keyOf(defs, i) {
+    const id = (defs[i] || '').trim();
+    return id || `field_${String.fromCharCode(97 + i)}`;
+}
+
+// 从模板反推需要几个默认字母键(与后端 field_keys_for 的反推分支一致)
+function inferKeyCount(template) {
+    const m = (template || '').match(/\{field_([a-z])(?:_name)?\}/g);
+    if (!m) return 0;
+    const maxIdx = Math.max(...m.map(s => s.match(/\{field_([a-z])/)[1].charCodeAt(0) - 97));
+    return maxIdx + 1;
+}
+
 function getFieldDefs() {
     return Array.from(document.querySelectorAll('#f-fielddefs .fd-name'))
         .map(el => el.value);
@@ -239,17 +271,26 @@ function getFieldDefs() {
 function renderFieldDefRows(defs) {
     const box = document.getElementById('f-fielddefs');
     const single = defs.length <= 1;  // 仅剩 1 行时禁用删除
-    box.innerHTML = defs.map((name, i) => `
+    box.innerHTML = defs.map((id, i) => `
         <div class="flex items-center gap-2">
-            <code class="font-mono text-xs text-surface-500 w-20 shrink-0">{field_${i}}</code>
-            <input class="input fd-name" data-idx="${i}" value="${escape(name)}"
-                   placeholder="字段名,如:申报金额" oninput="renderChips()">
+            <code class="fd-key font-mono text-xs text-surface-500 w-36 shrink-0">{${escape(keyOf(defs, i))}}</code>
+            <input class="input fd-name" data-idx="${i}" value="${escape(id)}"
+                   placeholder="字段 ID,留空则用 field_${String.fromCharCode(97 + i)}"
+                   oninput="onFieldIdInput(${i})">
             <button type="button" class="btn-ghost text-red-600 shrink-0" title="删除该字段"
                     onclick="removeFieldDef(${i})" ${single ? 'disabled' : ''}>
                 <i class="ri-close-line"></i>
             </button>
         </div>
     `).join('');
+    renderChips();
+}
+
+// 只更新受影响的那一行 code 标签 + chips,避免整块 re-render 丢焦点
+function onFieldIdInput(i) {
+    const defs = getFieldDefs();
+    const codeEls = document.querySelectorAll('#f-fielddefs .fd-key');
+    if (codeEls[i]) codeEls[i].textContent = `{${keyOf(defs, i)}}`;
     renderChips();
 }
 
@@ -262,16 +303,23 @@ function removeFieldDef(i) {
     if (defs.length <= 1) return;
 
     const ta = document.getElementById('f-prompt');
+    const key = keyOf(defs, i);
+    const usesCustomId = !!(defs[i] || '').trim();
+
     // 被删字段仍被模板引用 → 提醒(占位符会悬空,需手动清理)
-    const usedRe = new RegExp(`\\{field_${i}(_name)?\\}`);
+    const usedRe = new RegExp(`\\{${key}(_name)?\\}`);
     if (usedRe.test(ta.value)) {
-        if (!confirm(`模板仍引用 {field_${i}}(或其 _name 变体),删除后该占位符将失效或指向其他字段,建议取消并先清理模板。确认删除吗?`)) return;
+        if (!confirm(`模板仍引用 {${key}}(或其 _name 变体),删除后该占位符将失效,建议取消并先清理模板。确认删除吗?`)) return;
     }
-    // 更大下标自动减一:{field_3} → {field_2}(含 _name 变体)
-    ta.value = ta.value.replace(/\{field_(\d+)(_name)?\}/g, (m, n, suffix) => {
-        n = parseInt(n);
-        return n > i ? `{field_${n - 1}${suffix || ''}}` : m;
-    });
+
+    // 只有默认字母键需要重编号:{field_d} → {field_c}。
+    // 自定义 ID 是名字不是位置,删掉后其余 ID 不动。
+    if (!usesCustomId) {
+        ta.value = ta.value.replace(/\{field_([a-z])(_name)?\}/g, (m, L, suffix) => {
+            const n = L.charCodeAt(0) - 97;
+            return n > i ? `{field_${String.fromCharCode(96 + n)}${suffix || ''}}` : m;
+        });
+    }
 
     defs.splice(i, 1);
     renderFieldDefRows(defs);
@@ -281,12 +329,12 @@ function renderChips() {
     const defs = getFieldDefs();
     const requireName = document.getElementById('f-require').value === 'true';
     const box = document.getElementById('f-chips');
-    box.innerHTML = defs.map((name, i) => {
-        const label = escape(name.trim() || `字段${i}`);
+    box.innerHTML = defs.map((_, i) => {
+        const key = keyOf(defs, i);
         const nameChip = requireName
-            ? `<span class="chip" title="插入 {field_${i}_name}" onclick="insertPlaceholder('{field_${i}_name}')">${label}·名</span>`
+            ? `<span class="chip" title="插入 {${key}_name}" onclick="insertPlaceholder('{${key}_name}')">${escape(key)}·名</span>`
             : '';
-        return `<span class="chip" title="插入 {field_${i}}" onclick="insertPlaceholder('{field_${i}}')">${label}</span>${nameChip}`;
+        return `<span class="chip" title="插入 {${key}}" onclick="insertPlaceholder('{${key}}')">${escape(key)}</span>${nameChip}`;
     }).join('') + `<span class="chip" onclick="insertPlaceholder('{{&quot;match&quot;: true|false, &quot;reason&quot;: &quot;<不超过30字>&quot;}}')">JSON 输出范式</span>`;
 }
 
@@ -361,25 +409,17 @@ function onPgRuleChange() {
         <span class="text-surface-500 ml-1">${escape(r.description || '')}</span>`;
     preview.textContent = r.prompt_template || '(空)';
 
-    // 字段输入框:优先 field_defs(数量+业务名标签);旧规则回落模板反推
+    // 字段输入框:键名即 field_defs 的 ID,没配则 field_a/field_b/...
     const defs = Array.isArray(r.field_defs) && r.field_defs.length ? r.field_defs : null;
-    let count;
-    if (defs) {
-        count = defs.length;
-    } else {
-        const matches = r.prompt_template.match(/\{field_\d+\}/g);
-        count = matches ? Math.max(...matches.map(m => parseInt(m.match(/\d+/)[0]))) + 1 : 2;
-    }
-    container.innerHTML = Array.from({length: count}, (_, i) => {
-        const label = defs && defs[i] ? escape(defs[i]) : `fields[${i}]`;
-        const preName = defs && defs[i] ? escape(defs[i]) : '';
-        return `
+    const keys = defs
+        ? [...defs]
+        : Array.from({length: inferKeyCount(r.prompt_template) || 2}, (_, i) => `field_${String.fromCharCode(97 + i)}`);
+    container.innerHTML = keys.map((key) => `
         <div class="card p-3">
-            <label class="field-label"><span class="name">${label}</span>${r.require_field_name ? '<span class="required">*</span>' : ''}</label>
-            ${r.require_field_name ? `<input class="input pg-field-name mb-2" data-idx="${i}" placeholder="字段名" value="${preName}">` : ''}
-            <textarea class="input pg-field-value" data-idx="${i}" rows="2" placeholder="${label} 的值"></textarea>
-        </div>`;
-    }).join('');
+            <label class="field-label"><span class="name">${escape(key)}</span>${r.require_field_name ? '<span class="required">*</span>' : ''}</label>
+            ${r.require_field_name ? `<input class="input pg-field-name mb-2" data-key="${escape(key)}" placeholder="字段名(中文业务名)">` : ''}
+            <textarea class="input pg-field-value" data-key="${escape(key)}" rows="2" placeholder="${escape(key)} 的值"></textarea>
+        </div>`).join('');
 }
 
 async function runPlayground() {
@@ -387,20 +427,18 @@ async function runPlayground() {
     if (!r) { toast('请先选规则', 'error'); return; }
 
     const valueEls = document.querySelectorAll('.pg-field-value');
-    const fields = [];
+    const payload = { rule_id: r.id };
     for (const el of valueEls) {
-        const idx = parseInt(el.dataset.idx);
+        const key = el.dataset.key;
         const value = el.value.trim();
-        if (!value) { toast(`fields[${idx}].value 不能为空`, 'error'); return; }
+        if (!value) { toast(`${key}.value 不能为空`, 'error'); return; }
         const entry = { value };
         if (r.require_field_name) {
-            const nameEl = document.querySelector(`.pg-field-name[data-idx="${idx}"]`);
+            const nameEl = document.querySelector(`.pg-field-name[data-key="${key}"]`);
             entry.name = nameEl ? nameEl.value.trim() : '';
         }
-        fields.push(entry);
+        payload[key] = entry;
     }
-
-    const payload = { rule_id: r.id, fields };
 
     const placeholder = document.getElementById('pg-result-placeholder');
     const box = document.getElementById('pg-result-box');
@@ -564,7 +602,7 @@ function renderHistory(data) {
                     <div class="space-y-1">
                         ${(record.fields || []).map((f, i) => `
                             <div class="text-sm">
-                                <span class="text-surface-500">${escape(f.name || `字段${i}`)}:</span>
+                                <span class="text-surface-500">${escape(f.name || f.key || `字段${i}`)}:</span>
                                 <span class="text-surface-700 ml-1">${escape(f.value || '-')}</span>
                             </div>
                         `).join('')}

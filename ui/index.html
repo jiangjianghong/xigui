@@ -510,7 +510,7 @@
                 <!-- require_field_name -->
                 <div>
                     <div class="field-label"><span class="name">require_field_name</span></div>
-                    <p class="field-help">是否要求请求里每个 <code>field.name</code> 都必填。<b>若 prompt_template 引用了 {field_N_name},务必勾选 true</b>;否则 LLM 拿到空字符串,判定不准。</p>
+                    <p class="field-help">是否要求请求里每个 <code>field.name</code> 都必填。<b>若 prompt_template 引用了 {键_name},务必勾选 true</b>;否则 LLM 拿到空字符串,判定不准。</p>
                     <select id="f-require" class="input" onchange="renderChips()">
                         <option value="false">false — 不校验 name</option>
                         <option value="true">true — 缺 name 直接返 422</option>
@@ -527,7 +527,7 @@
                 <!-- field_defs -->
                 <div>
                     <div class="field-label"><span class="name">字段定义</span><span class="required">*</span></div>
-                    <p class="field-help">先在这里添加本规则要比对的字段(填业务名,如"申报金额"),下方模板区会生成对应 chip,点击即插入 <code>{field_N}</code> 占位符。</p>
+                    <p class="field-help">本规则要比对的字段。<b>填字段 ID</b>(如 <code>keyan_name</code>),它就是请求体里的键名;<b>留空则用默认的 <code>field_a</code>/<code>field_b</code></b>。下方模板区会生成对应 chip,点击即插入占位符。</p>
                     <div id="f-fielddefs" class="space-y-2"></div>
                     <button type="button" class="btn-ghost mt-2" onclick="addFieldDef()">
                         <i class="ri-add-line"></i> 添加字段
@@ -537,9 +537,9 @@
                 <!-- prompt_template -->
                 <div>
                     <div class="field-label"><span class="name">prompt_template</span><span class="required">*</span></div>
-                    <p class="field-help">规则的核心,用自然语言描述判定标准。支持占位符 <code>{field_0}</code> <code>{field_1}</code> ... <code>{field_0_name}</code> ... 按索引引用。<b>JSON 示例里的大括号要写双重 {{ }}</b>,否则 .format 会报错。</p>
+                    <p class="field-help">规则的核心,用自然语言描述判定标准。占位符与字段 ID 同名:<code>{field_a}</code> <code>{field_b}</code> ... 或自定义的 <code>{keyan_name}</code>;加 <code>_name</code> 后缀引用字段名。<b>JSON 示例里的大括号要写双重 {{ }}</b>,否则 .format 会报错。</p>
                     <div id="f-chips" class="mb-2"></div>
-                    <textarea id="f-prompt" class="input" rows="10" placeholder="请判断以下字段是否一致...&#10;A: {field_0}&#10;B: {field_1}&#10;严格按 JSON 输出: {{&quot;match&quot;: true|false, &quot;reason&quot;: &quot;...&quot;}}"></textarea>
+                    <textarea id="f-prompt" class="input" rows="10" placeholder="请判断以下字段是否一致...&#10;A: {field_a}&#10;B: {field_b}&#10;严格按 JSON 输出: {{&quot;match&quot;: true|false, &quot;reason&quot;: &quot;...&quot;}}"></textarea>
                 </div>
             </div>
 
