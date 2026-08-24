@@ -261,7 +261,7 @@ Task 1 已完成，commit `53d0182` + 修复 `e1bb9c7`。上面的代码块已�
 
 同轮一并修掉的：`_DB_DEFAULTS` 缺类型标注导致 `mypy app` 报两处错（`make lint` 门禁内）；`pool_size` / `max_overflow` 用 `raw.get(key) or 默认值` 会把配置的 `0` 静默吃掉（`max_overflow=0` 表示绝不超过 pool_size，是有人会真写的值），抽出 `take()` 与 `pick()` 统一判断；`get_db_config()` docstring 原称 `MYSQL_*` 全覆盖，实际只有 5/9 个字段读环境变量，已收窄措辞。
 
-**遗留给 Task 5：** 宿主环境若存在 `MYSQL_HOST` / `MYSQL_PASSWORD`（docker compose 与官方 mysql 镜像用的正是这些变量名），本文件 6 个测试会挂 2 个——环境变量泄入了断言。Task 5 建 `conftest.py` 时要加 autouse fixture 清掉 `MYSQL_*`。
+**遗留给 Task 5：** 宿主环境若存在 `MYSQL_HOST` / `MYSQL_PASSWORD`（docker compose 与官方 mysql 镜像用的正是这些变量名），本文件 6 个测试会挂 4 个——环境变量泄入了断言。`MYSQL_PASSWORD` 会把密码整段换进连接串，连带打死两条跟 host 无关的编码用例，故是 4 不是 2。Task 5 建 `conftest.py` 时要加 autouse fixture 清掉 `MYSQL_*`。
 
 **遗留给 Task 3：** `host` / `database` / `charset` 三项目前是裸插进 f-string 的。当前值来自受信任的配置文件，没有问题；若 Task 3 想更稳，可改用 `URL.create(...)` 让 SQLAlchemy 自己组装，连编码都不用管。
 
@@ -1190,7 +1190,8 @@ def _clean_mysql_env(monkeypatch):
 
     ``get_db_config()`` 让 MYSQL_HOST / MYSQL_PASSWORD 等覆盖配置文件,而这几个
     正是 docker compose 和官方 mysql 镜像会设的变量名——开发机上存在的概率不低。
-    真发生时 tests/unit/test_db_config.py 会挂 2 个,且报错看着像配置读错了。
+    真发生时 tests/unit/test_db_config.py 会挂 4 个（实测：仅 MYSQL_HOST 与
+    MYSQL_PASSWORD 二者即可触发），且报错看着像配置读错了。
     """
     for name in (
         "MYSQL_HOST", "MYSQL_PORT", "MYSQL_DATABASE",
@@ -1275,6 +1276,24 @@ git commit -m "test: SQLite in-memory 夹具
 - StaticPool：内存库随连接销毁，须让引擎共用一条连接
 - client 与 db 共用会话，测试里塞的数据接口才看得见"
 ```
+
+### 实施记录（2026-08-24）
+
+commit `40843cc`（夹具本体）+ `cdfac21`（收尾）。夹具最终 **5 条测试 + 1 xfail**，全量 131 passed。
+
+**四条守护非显然行为的测试做了缺陷注入，全部见红：**
+
+| 注入的缺陷 | 转红的测试 | 观察到的失败态 |
+|---|---|---|
+| 删掉 `PRAGMA foreign_keys=ON` | `test_foreign_keys_enabled`、`test_foreign_key_rejects_dangling_project_id`、`test_on_delete_set_null_is_enforced_by_db` 三条全红 | 外键静默失效 |
+| 把 `db.delete(p)` 换回 ORM 删除（对照实验） | `test_on_delete_set_null...` 在 FK 关闭时**照样绿** | 证明原写法验证的是 ORM cascade 而非 DB 约束，改用原生 SQL 删除是必要的 |
+| 摘掉 `poolclass=StaticPool` | `test_engine_is_shared_across_threads` 红 | `no such table: rules` |
+
+**StaticPool 的真实承重点被查清了。** 摘掉它后单线程 4 条测试**全部照常通过**——因为 SQLAlchemy 给内存 SQLite 的默认池是 `SingletonThreadPool`，单线程内连接本就复用，schema 不会丢。它只在**跨线程**时承重：接口测试经 TestClient 调同步 endpoint 时 Starlette 派进工作线程池，那条新连接看到的是另一个空库。故补了 `test_engine_is_shared_across_threads` 显式跨线程查询钉死这个性质——否则它要到 Task 12 才隐性承重，届时报的 `no such table` 看着像建表没跑成，极难定位。conftest 模块 docstring 第 2 条也随之订正（原"内存库随连接销毁而消失"不准确，真相是"连接私有，换连接即换空库"）。
+
+**修正两处计划里的数字：** (1) `MYSQL_*` 泄漏影响 test_db_config.py **4 个**测试而非 2 个——`MYSQL_PASSWORD` 会把密码整段换进连接串，连带打死两条跟 host 无关的编码用例（已在上方 Task 1 遗留提醒与本任务 conftest 代码块中订正）。(2) `db` 夹具是生成器，返回标注应为 `Iterator[Session]`。
+
+**遗留给 Task 17：** `client` 夹具用 `app.dependency_overrides.clear()` 收尾。若 `with TestClient(app)` 的 lifespan 阶段（yield 之前）抛异常，`clear()` 会被跳过，污染后续用例的覆盖表。Task 17 重写 lifespan 时，把它改成 `finally` 里 `app.dependency_overrides.pop(get_db, None)`。当前无 lifespan 逻辑，尚不触发。
 
 ---
 
