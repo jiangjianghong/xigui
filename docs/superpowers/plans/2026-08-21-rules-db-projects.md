@@ -5085,6 +5085,18 @@ git commit -m "feat(boot): 启动建库建表 + 首次导入，config 清掉 yam
 - 删除 config.get_rules / reload_rules / _rules_cache"
 ```
 
+### 实施记录（2026-08-24）
+
+commit `2ec1344`。全量 287 passed，`ruff check .` 与 `mypy app`(32 文件) 全绿。**后端 Task 1-17 至此全部完成。**
+
+**Step 7（降级 reload-rules）已在 Task 15 完成**，本任务跳过——原因见 Task 15 实施记录（`test_admin_reload_rules` 断言 DB 条数，逼得 reload-rules 必须提前切库）。Step 6 删 `config.get_rules` 时确认过：切库后它的使用者只剩 `main.py` 旧 lifespan，正是 Step 4 要重写的那段，故删除无波及。
+
+**给 lifespan 的测试守卫补了回归保护（计划没要求，但它是承重的）。** Step 5 的守卫 `if get_db in _app.dependency_overrides` 决定测试是否跳过 `bootstrap_database()`。它写坏的后果很隐蔽：**开发机上恰好起着 MySQL 时，测试会静默连真库并照样全绿**，换台机器或上 CI 才挂，且报错指向连接超时而不是守卫失效。这正是本次流程反复在防的「绿了但没验证到」。故新增 `test_lifespan_skips_bootstrap_when_db_overridden`，让 `bootstrap_database` 一被调用就炸。
+
+缺陷注入验证：物理删掉守卫代码块后，该用例精确报 `AssertionError: 测试环境不应调用 bootstrap_database`（而非超时或连接错误），确认它咬的是守卫本身。
+
+**落实了 Task 5 遗留的 `dependency_overrides` 修复。** conftest 的 `client` 夹具改为 `finally` 里 `pop(get_db, None)`。Task 5 当时判断「当前无 lifespan 逻辑，尚不触发」，本任务给 lifespan 加了建库与首次导入后，yield 之前抛异常已成为现实可能，此时旧的 `clear()` 会被跳过、把覆盖漏给后续用例。
+
 ---
 
 # 前端部分
