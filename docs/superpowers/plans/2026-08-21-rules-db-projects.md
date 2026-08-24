@@ -3062,7 +3062,7 @@ def export_bundle(
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `uv run pytest tests/unit/test_rules_sync.py -v`
-Expected: 16 passed
+Expected: 15 passed
 
 - [ ] **Step 5: 提交**
 
@@ -3076,6 +3076,19 @@ git commit -m "feat(rules-sync): 导入导出编排
 - 引用未定义项目 → 警告 + 置未分组，不中断
 - 已存在规则的 sort_order 不被覆盖，导入片段不打乱现有顺序"
 ```
+
+### 实施记录（2026-08-24）
+
+commit 见分支历史。测试 **15 条**（计划原写「16」是数错，实际 15，全绿）。
+
+**修掉计划代码里的两处 mypy 报错（会挂 `mypy app` 门禁）：**
+
+1. `import_bundle` 的项目循环与规则循环复用了同名变量 `existing`——前者 `Project | None`、后者 `Rule | None`，mypy 判类型冲突并级联出 10 处错。已拆成 `existing_project` / `existing_rule`。
+2. `_validate` 里 `p` / `r` 在「dict 循环」（`enumerate(raw_projects)`，元素是 dict）与「模型循环」（`for p in projects`，元素是 ProjectIn/RuleIn）间复用，mypy 把 `.key` / `.id` 判成 dict 无此属性。dict 循环改用 `raw_p` / `raw_r`。
+
+两处都是「同名变量在同一函数内承载两种类型」——mypy 只按首次赋值推断。计划代码显然没跑过 `mypy app`。
+
+**事务保证做了缺陷注入验证：** 在 `_validate` 之前故意写一条 GOOD 规则，`test_invalid_rule_raises_before_any_write` 的 `count == 0` 立即变红——证明这条断言确实咬住了「校验先于任何写入」，而非摆设。这条保证的结构支撑是：写循环消费的是 `_validate` 返回的已校验对象，物理上无法「先写后校验」，除非有人蓄意插入旁路写入（正是注入的那种）。
 
 ---
 
