@@ -284,7 +284,7 @@ from __future__ import annotations
 
 from sqlalchemy import create_engine, inspect
 
-from app.db.models import Base, CompareHistory, Project, Rule
+from app.db.models import Base, Project, Rule
 
 
 def test_tables_created_on_sqlite():
@@ -520,7 +520,6 @@ from __future__ import annotations
 
 import pytest
 
-from app.core import config as cfg_module
 from app.db import session as sess_module
 
 
@@ -534,9 +533,16 @@ def reset_engine():
 
 @pytest.fixture
 def sqlite_cfg(monkeypatch):
+    """把引擎指向内存 SQLite。
+
+    注意必须 patch 到 ``sess_module`` 上而不是 ``app.core.config``：
+    ``session.py`` 用的是 ``from app.core.config import ...``，那是另一个名字
+    绑定，patch 源模块对它无效。``tests/integration/test_admin_rules.py``
+    里也踩过同样的坑并留了注释。
+    """
     monkeypatch.setattr(sess_module, "build_db_url", lambda **kw: "sqlite://")
     monkeypatch.setattr(
-        cfg_module, "get_db_config",
+        sess_module, "get_db_config",
         lambda: {"pool_size": 5, "max_overflow": 10, "echo": False},
     )
 
@@ -549,6 +555,15 @@ def test_dispose_engine_resets(sqlite_cfg):
     first = sess_module.get_engine()
     sess_module.dispose_engine()
     assert sess_module.get_engine() is not first
+
+
+def test_sqlite_url_skips_pool_args(sqlite_cfg):
+    """SQLite 的默认 pool 不接受 pool_size/max_overflow，传了会 TypeError。
+
+    这条同时证明 sqlite_cfg 的 patch 真的生效了——若 patch 没打中，
+    get_engine 会去读真实配置拼出 mysql:// 连接串。
+    """
+    assert sess_module.get_engine().dialect.name == "sqlite"
 
 
 def test_get_db_yields_and_closes(sqlite_cfg):
@@ -648,7 +663,7 @@ def get_db() -> Iterator[Session]:
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `uv run pytest tests/unit/test_session.py -v`
-Expected: 3 passed
+Expected: 4 passed
 
 - [ ] **Step 5: 提交**
 
