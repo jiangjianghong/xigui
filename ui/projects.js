@@ -276,6 +276,81 @@ async function confirmProjectDel() {
 }
 
 // ---------------------------------------------------------------------------
+// 导入 / 导出
+// ---------------------------------------------------------------------------
+
+/** 导出与左栏联动:当前筛的是什么就导什么,不额外追问。 */
+function exportRules() {
+    window.location.href = '/admin/export' + projectQuery();
+}
+
+function triggerImport() {
+    const el = document.getElementById('import-file');
+    el.value = '';          // 清掉上次的选择，否则选同一个文件不触发 change
+    el.click();
+}
+
+async function doImport(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+
+    const fd = new FormData();
+    fd.append('file', file);
+
+    try {
+        // 不能走 api()——它会设 Content-Type: application/json，
+        // multipart 的 boundary 必须交给浏览器自己生成
+        const resp = await fetch('/admin/import', { method: 'POST', body: fd });
+        const text = await resp.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch (e) { data = { raw: text }; }
+
+        if (!resp.ok) {
+            throw new Error((data && data.detail) || `HTTP ${resp.status}`);
+        }
+
+        await loadProjects();
+        await loadRules();
+
+        const warnings = data.warnings || [];
+        if (warnings.length) {
+            showImportResult(data);
+        } else {
+            toast(
+                `导入完成:规则 新增 ${data.rules.created} / 更新 ${data.rules.updated}`,
+                'success',
+            );
+        }
+    } catch (e) {
+        toast('导入失败: ' + e.message, 'error');
+    }
+}
+
+/** 有警告时用弹窗而非 toast:警告可能多条，且需要逐条看完再决定要不要补救。 */
+function showImportResult(data) {
+    const body = document.getElementById('import-result-body');
+    const w = data.warnings || [];
+    body.innerHTML = `
+        <div class="flex gap-6">
+            <div><b>项目</b>　新增 ${data.projects.created} / 更新 ${data.projects.updated}</div>
+            <div><b>规则</b>　新增 ${data.rules.created} / 更新 ${data.rules.updated}</div>
+        </div>
+        <div>
+            <p class="font-bold mb-2" style="color: var(--warning-deep);">
+                <i class="ri-alert-line mr-1"></i>${w.length} 条告警
+            </p>
+            <ul class="space-y-1" style="max-height: 260px; overflow-y: auto;">
+                ${w.map(x => `<li class="text-xs" style="color: var(--text-secondary);">· ${escape(x)}</li>`).join('')}
+            </ul>
+        </div>`;
+    document.getElementById('import-result-modal').classList.remove('hidden');
+}
+
+function closeImportResult() {
+    document.getElementById('import-result-modal').classList.add('hidden');
+}
+
+// ---------------------------------------------------------------------------
 // 初始化
 // ---------------------------------------------------------------------------
 

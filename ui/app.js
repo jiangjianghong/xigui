@@ -522,9 +522,9 @@ function renderPgResult(data, browserElapsed) {
 
 async function reloadAll() {
     try {
-        await api('POST', '/admin/reload-rules');
+        if (typeof loadProjects === 'function') await loadProjects();
         await loadRules();
-        toast('已刷新缓存与规则列表', 'success');
+        toast('数据已刷新', 'success');
     } catch (e) {
         toast('刷新失败: ' + e.message, 'error');
     }
