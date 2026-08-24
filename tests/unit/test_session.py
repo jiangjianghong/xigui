@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+import time
+
 import pytest
 
 from app.db import session as sess_module
@@ -50,7 +53,7 @@ def test_sqlite_url_skips_pool_args(sqlite_cfg):
     assert sess_module.get_engine().dialect.name == "sqlite"
 
 
-def test_get_db_yields_and_closes(sqlite_cfg):
+def test_get_db_yields_session(sqlite_cfg):
     from app.db.models import Base
 
     Base.metadata.create_all(sess_module.get_engine())
@@ -59,3 +62,72 @@ def test_get_db_yields_and_closes(sqlite_cfg):
     assert db.is_active
     with pytest.raises(StopIteration):
         next(gen)
+
+
+def test_get_db_closes_session(sqlite_cfg, monkeypatch):
+    """finally 里的 close() 必须真被调用。
+
+    原先只断言 db.is_active，而它对任何新建 Session 恒为 True，
+    等于什么都没验证——依赖泄漏连接是压垮连接池的经典方式。
+    """
+    gen = sess_module.get_db()
+    db = next(gen)
+    closed: list[int] = []
+    monkeypatch.setattr(db, "close", lambda: closed.append(1))
+    with pytest.raises(StopIteration):
+        next(gen)
+    assert closed == [1]
+
+
+def test_get_engine_is_thread_safe(sqlite_cfg, monkeypatch):
+    """并发首次调用只能建出一个引擎。
+
+    用 sleep 把 create_engine 的耗时撑开，让 check-then-act 的窗口必然命中；
+    不加锁时四个线程会各拿到一个引擎，多出来的连接池 dispose_engine 永远
+    释放不掉。
+    """
+    real_create = sess_module.create_engine
+
+    def slow_create(*args, **kwargs):
+        time.sleep(0.05)
+        return real_create(*args, **kwargs)
+
+    monkeypatch.setattr(sess_module, "create_engine", slow_create)
+
+    engines: list[object] = []
+    lock = threading.Lock()
+
+    def worker() -> None:
+        eng = sess_module.get_engine()
+        with lock:
+            engines.append(eng)
+
+    threads = [threading.Thread(target=worker) for _ in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(engines) == 4
+    assert len({id(e) for e in engines}) == 1
+    # 工厂必须绑在最终发布的那个引擎上
+    assert sess_module.get_sessionmaker().kw["bind"] is sess_module.get_engine()
+
+
+def test_engine_published_after_sessionmaker(sqlite_cfg, monkeypatch):
+    """_engine 必须等工厂建好之后再发布。
+
+    顺序反了就会留出一个窗口：别的线程从快路径拿到引擎、直奔
+    get_sessionmaker，却读到还是 None 的 _SessionLocal。这里不靠并发定时，
+    而是在「建工厂」的那一刻回头检查 _engine 尚未发布——等价，且稳定。
+    """
+    real_sessionmaker = sess_module.sessionmaker
+    engine_at_build: list[object] = []
+
+    def spy(*args, **kwargs):
+        engine_at_build.append(sess_module._engine)
+        return real_sessionmaker(*args, **kwargs)
+
+    monkeypatch.setattr(sess_module, "sessionmaker", spy)
+    sess_module.get_engine()
+    assert engine_at_build == [None]
