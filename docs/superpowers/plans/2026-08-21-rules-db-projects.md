@@ -589,13 +589,14 @@ Create `app/db/session.py`:
 ```python
 """引擎、会话工厂与 FastAPI 依赖。
 
-引擎是进程级单例,懒创建。测试通过 ``app.dependency_overrides[get_db]``
-换成 SQLite 会话,不碰这里的全局状态。
+引擎是进程级单例，懒创建。测试通过 ``app.dependency_overrides[get_db]``
+换成 SQLite 会话，不碰这里的全局状态。
 """
 
 from __future__ import annotations
 
 import logging
+import threading
 from typing import Iterator
 
 from sqlalchemy import Engine, create_engine
@@ -607,17 +608,28 @@ log = logging.getLogger("aicheck.db")
 
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
+_lock = threading.Lock()
 
 
 def get_engine() -> Engine:
-    """返回进程级引擎,首次调用时创建。
+    """返回进程级引擎，首次调用时创建。
 
-    ``pool_pre_ping`` 与 ``pool_recycle`` 是连外部 MySQL 的刚需:MySQL 默认
-    8 小时空闲断连,没有 pre_ping 的话服务闲置一夜后第一个请求必定拿到
+    ``pool_pre_ping`` 与 ``pool_recycle`` 是连外部 MySQL 的刚需：MySQL 默认
+    8 小时空闲断连，没有 pre_ping 的话服务闲置一夜后第一个请求必定拿到
     死连接报 ``MySQL server has gone away``。
+
+    双重检查加锁，与 ``app/core/config.py`` 的缓存同一套模式：``get_db`` 是同步
+    依赖，FastAPI 会把它派到线程池，裸的 check-then-act 会让首批并发请求各建
+    一个引擎并交错赋值，最终 ``_SessionLocal`` 与 ``_engine`` 绑到不同引擎上，
+    多出来的连接池谁也 dispose 不掉。
     """
     global _engine, _SessionLocal
-    if _engine is None:
+    engine = _engine
+    if engine is not None:
+        return engine
+    with _lock:
+        if _engine is not None:
+            return _engine
         cfg = get_db_config()
         url = build_db_url()
         kwargs: dict = {
@@ -626,33 +638,46 @@ def get_engine() -> Engine:
             "echo": cfg.get("echo", False),
             "future": True,
         }
-        # SQLite(测试)不支持连接池参数
+        # SQLite（测试）不支持连接池参数
         if not url.startswith("sqlite"):
             kwargs["pool_size"] = cfg.get("pool_size", 5)
             kwargs["max_overflow"] = cfg.get("max_overflow", 10)
-        _engine = create_engine(url, **kwargs)
-        _SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
-        log.info("数据库引擎已创建 dialect=%s", _engine.dialect.name)
-    return _engine
+        new_engine = create_engine(url, **kwargs)
+        _SessionLocal = sessionmaker(
+            bind=new_engine, autoflush=False, expire_on_commit=False
+        )
+        # 这两行的先后顺序是有意的：快路径只看 _engine，必须等工厂建好之后
+        # 再发布它。反过来写就会留出一个窗口——别的线程从快路径拿到引擎、
+        # 直奔 get_sessionmaker，却读到还是 None 的 _SessionLocal。
+        _engine = new_engine
+        log.info("数据库引擎已创建 dialect=%s", new_engine.dialect.name)
+        return new_engine
 
 
 def get_sessionmaker() -> sessionmaker[Session]:
+    """返回会话工厂；引擎尚未创建时先把它建出来。"""
     get_engine()
-    assert _SessionLocal is not None
-    return _SessionLocal
+    factory = _SessionLocal
+    assert factory is not None
+    return factory
 
 
 def dispose_engine() -> None:
-    """释放引擎并清空缓存。测试与优雅关闭时调用。"""
+    """释放引擎并清空缓存。测试与优雅关闭时调用。
+
+    同样持锁，否则与并发的 ``get_engine()`` 交错时会留下一个已 dispose 的引擎
+    配一个仍指向它的会话工厂。
+    """
     global _engine, _SessionLocal
-    if _engine is not None:
-        _engine.dispose()
-    _engine = None
-    _SessionLocal = None
+    with _lock:
+        if _engine is not None:
+            _engine.dispose()
+        _engine = None
+        _SessionLocal = None
 
 
 def get_db() -> Iterator[Session]:
-    """FastAPI 依赖:每请求一个会话,请求结束必定关闭。"""
+    """FastAPI 依赖：每请求一个会话，请求结束必定关闭。"""
     db = get_sessionmaker()()
     try:
         yield db
@@ -675,6 +700,34 @@ pool_pre_ping + pool_recycle=3600 是连外部 MySQL 的刚需：
 MySQL 默认 8 小时空闲断连，无 pre_ping 时服务闲置一夜后
 第一个请求必拿到死连接报 MySQL server has gone away。"
 ```
+
+### 实施记录（2026-08-24）
+
+commit `383eabe` + 修复 `46f2643`。上面的实现已是最终版本，测试共 **7 条**。
+
+**加锁是审查追加的。** 原计划的 `get_engine()` 是裸的 check-then-act，而 `get_db` 是同步依赖、会被 FastAPI 派到线程池。首批并发请求会交错赋值，最终 `_SessionLocal` 与 `_engine` 绑到不同引擎，多出来的连接池谁也 dispose 不掉——不崩溃，只是缓慢泄漏，没有任何报错指向根因。
+
+**「发布最后化」比加锁本身更微妙。** 快路径只检查 `_engine`。若沿用「先赋值 `_engine` 再建 `_SessionLocal`」的朴素顺序，另一个线程会从快路径拿到引擎、直奔 `get_sessionmaker()`，读到还是 `None` 的 `_SessionLocal` 撞上 assert——比原缺陷更尖锐。所以必须等工厂建好再发布 `_engine`，那两行的顺序是承重的。
+
+`dispose_engine()` 同样持锁，`get_sessionmaker()` 改成单次读取后 assert——都是同一个竞态的其他面，只修一半会给出「已处理过」的假象。
+
+**测试清单**（后三条为审查追加，均做过缺陷注入验证，确认缺陷态下必红）：
+
+| 用例 | 守什么 |
+|---|---|
+| `test_get_engine_is_singleton` | 单例语义 |
+| `test_dispose_engine_resets` | dispose 后重建 |
+| `test_sqlite_url_skips_pool_args` | URL 前缀分支；同时证明 monkeypatch 打中了 `sess_module` |
+| `test_get_db_yields_session` | yield 出可用 Session |
+| `test_get_db_closes_session` | `finally` 里 `close()` 真被调用 |
+| `test_get_engine_is_thread_safe` | 并发下只建一个引擎 |
+| `test_engine_published_after_sessionmaker` | 发布顺序不被善意重构改回去 |
+
+原 `test_get_db_yields_and_closes` 已改名为 `test_get_db_yields_session`：它断言的 `db.is_active` 对任何新建 Session 恒为 True，从未验证过 close，名字却声称管——名字与断言对不上比测试弱更误导人。
+
+**一个方法论教训，值得后续任务照做。** 实施者最初用固定 `sleep(0.02)` 探测发布顺序隐患，测试**通过**了，差点据此断定隐患不存在；换成轮询才命中。原因是首次 `create_engine` 本身耗时超过 20ms，探测线程反被锁挡在外面。这是典型的假阴性——测试绿了，但绿的原因和预期完全不同。**并发测试用固定 sleep 撑窗口时，要先确认窗口真的被撑开了。**
+
+**遗留给 Task 4：** 本任务的测试桩 `lambda **kw: "sqlite://"` 对 `with_database` 的取值一视同仁。在引擎侧无害（引擎没有理由走 `with_database=False`），但 Task 4 的 bootstrap **建库正是走这条路**，那里的桩必须能区分取值，不能再一把梭。
 
 ---
 
