@@ -1034,7 +1034,7 @@ def bootstrap_database(engine: Engine | None = None) -> Engine:
 - [ ] **Step 4: 跑测试确认通过**
 
 Run: `uv run pytest tests/unit/test_bootstrap.py -v`
-Expected: 19 passed
+Expected: 18 passed
 
 - [ ] **Step 5: 提交**
 
@@ -1047,6 +1047,28 @@ git commit -m "feat(db): 启动时建库建表
 - 权限不足时直接打出该执行的 SQL 和该授的权，不甩 Access denied
 - 不做字段自动迁移（spec 决策 6）"
 ```
+
+### 实施记录（2026-08-24）
+
+commit `8fa2ca3`，18 条测试，全量 126 通过。实现与上面粘贴的代码逐字一致（仅标点改全角）。
+
+**三条守护非显然行为的测试做了缺陷注入验证，全部见红：**
+
+| 注入的缺陷 | 转红的测试 |
+|---|---|
+| `build_db_url(with_database=False)` → `build_db_url()` | `test_ensure_database_connects_without_db_name` |
+| 反转 `if "already exists" in msg` | `test_ensure_tables_swallows_concurrent_create` |
+| 无条件吞掉所有异常 | `test_ensure_tables_reraises_other_errors` |
+
+第一条正是 Task 3 遗留提醒的那个点——原计划的测试桩 `lambda **kw` 抹平了 `with_database` 的取值差异，这个 bug 溜过去也测不出来。
+
+**两条需要知晓的性质：**
+
+**1. `ensure_database()` 里「非 MySQL 就跳过」的分支在生产中永不执行。** `build_db_url()` 硬编码 `mysql+pymysql://` 前缀（`app/core/config.py:220`），`url.startswith("mysql")` 恒为真。该分支只在测试 monkeypatch 时走到。保留它是面向未来方言的防御，但**不要误以为本项目支持 SQLite 部署**——测试用 SQLite 走的是 `conftest.py` 的依赖覆盖，不经过 bootstrap。
+
+**2. `log.error` 里 `'<user>'@'%%'` 渲染成单个 `%` 的前提是该调用带 args。** logging 仅在 `record.args` 非空时才做 `%` 格式化。将来若有人把三个 `%s` 参数去掉、改成 f-string 直接拼库名，`%%` 会原样漏进给 DBA 的 SQL 里。当前形态已验证正确（`LogRecord.getMessage()` 输出 `GRANT ALL ON \`mydb\`.* TO '<user>'@'%';`）。
+
+**`bootstrap_database()` 的函数内 import 是有意保留的。** 实测确认模块级导入无循环依赖，但函数内导入让 `bootstrap_database(engine)` 这条路径根本不加载 `app.db.session`，把「传入 engine 时绝不触碰进程级单例」从纪律约束变成结构保证。不要「顺手优化」成模块级。
 
 ---
 
