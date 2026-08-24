@@ -102,6 +102,86 @@ function projectQuery() {
 }
 
 // ---------------------------------------------------------------------------
+// 勾选与批量移入移出
+// ---------------------------------------------------------------------------
+
+let SELECTED = new Set();
+
+function isSelected(id) {
+    return SELECTED.has(id);
+}
+
+function toggleSelect(id, on) {
+    if (on) SELECTED.add(id); else SELECTED.delete(id);
+    syncBulkBar();
+}
+
+function toggleSelectAll(on) {
+    SELECTED = on ? new Set(RULES.map(r => r.id)) : new Set();
+    for (const cb of document.querySelectorAll('.rule-check')) cb.checked = on;
+    syncBulkBar();
+}
+
+function clearSelection() {
+    SELECTED = new Set();
+    for (const cb of document.querySelectorAll('.rule-check')) cb.checked = false;
+    const all = document.getElementById('rules-check-all');
+    if (all) all.checked = false;
+    syncBulkBar();
+}
+
+/** 只在有选中时显示批量条；当前已是「未分组」视图时「移出」无意义，置灰。 */
+function syncBulkBar() {
+    const bar = document.getElementById('bulk-bar');
+    if (!bar) return;
+    bar.classList.toggle('hidden', SELECTED.size === 0);
+    document.getElementById('bulk-count').textContent = SELECTED.size;
+    document.getElementById('bulk-unassign-btn').disabled =
+        CURRENT_PROJECT === UNASSIGNED;
+}
+
+function renderBulkProjectOptions() {
+    const sel = document.getElementById('bulk-project');
+    if (!sel) return;
+    sel.innerHTML = PROJECTS.length
+        ? PROJECTS.map(p => `<option value="${escape(p.key)}">${escape(p.name)}</option>`).join('')
+        : '<option value="">(还没有项目)</option>';
+}
+
+async function bulkAssign() {
+    const key = document.getElementById('bulk-project').value;
+    if (!key) { toast('请先新建一个项目', 'error'); return; }
+    const ids = [...SELECTED];
+    if (!ids.length) return;
+
+    try {
+        const res = await api('POST', `/admin/projects/${encodeURIComponent(key)}/rules`,
+                              { rule_ids: ids });
+        toast(`已移入 ${res.moved} 条规则`, 'success');
+        clearSelection();
+        await loadProjects();
+        await loadRules();
+    } catch (e) {
+        toast('移入失败: ' + e.message, 'error');
+    }
+}
+
+async function bulkUnassign() {
+    const ids = [...SELECTED];
+    if (!ids.length) return;
+
+    try {
+        const res = await api('POST', '/admin/rules/unassign', { rule_ids: ids });
+        toast(`已移出 ${res.moved} 条规则`, 'success');
+        clearSelection();
+        await loadProjects();
+        await loadRules();
+    } catch (e) {
+        toast('移出失败: ' + e.message, 'error');
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 初始化
 // ---------------------------------------------------------------------------
 

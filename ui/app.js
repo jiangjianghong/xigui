@@ -92,6 +92,7 @@ function renderRules() {
     if (!RULES.length) {
         tbody.innerHTML = '';
         empty.classList.remove('hidden');
+        if (typeof syncBulkBar === 'function') syncBulkBar();
         return;
     }
     empty.classList.add('hidden');
@@ -102,9 +103,15 @@ function renderRules() {
         const sysBadge = (r.system_prompt && r.system_prompt.trim())
             ? `<span class="badge badge-info" title="${escape(r.system_prompt)}">已配置</span>`
             : '<span class="badge badge-gray">空</span>';
+        const projBadge = r.project
+            ? `<span class="badge badge-success">${escape(r.project.name)}</span>`
+            : '<span class="badge badge-gray">未分组</span>';
+        const checked = (typeof isSelected === 'function' && isSelected(r.id)) ? 'checked' : '';
         return `<tr class="table-row">
+            <td><input type="checkbox" class="rule-check" data-id="${escape(r.id)}" ${checked} onchange="toggleSelect('${escape(r.id)}', this.checked)"></td>
             <td><code class="font-mono text-brand-700">${escape(r.id)}</code></td>
             <td>${escape(r.name || '')}</td>
+            <td>${projBadge}</td>
             <td>${reqBadge}</td>
             <td>${sysBadge}</td>
             <td>
@@ -113,6 +120,7 @@ function renderRules() {
             </td>
         </tr>`;
     }).join('');
+    if (typeof syncBulkBar === 'function') syncBulkBar();
 }
 
 // ---------------------------------------------------------------------------
@@ -150,6 +158,17 @@ function fillForm(r) {
     document.getElementById('f-id').value = r.id || '';
     document.getElementById('f-name').value = r.name || '';
     document.getElementById('f-desc').value = r.description || '';
+
+    const psel = document.getElementById('f-project');
+    if (psel) {
+        const opts = ['<option value="">(未分组)</option>'].concat(
+            (typeof PROJECTS !== 'undefined' ? PROJECTS : []).map(
+                p => `<option value="${escape(p.key)}">${escape(p.name)}</option>`
+            )
+        );
+        psel.innerHTML = opts.join('');
+        psel.value = (r.project && r.project.key) ? r.project.key : '';
+    }
     document.getElementById('f-require').value = r.require_field_name ? 'true' : 'false';
     document.getElementById('f-system').value = r.system_prompt || '';
     document.getElementById('f-prompt').value = r.prompt_template || '';
@@ -175,6 +194,7 @@ function readForm() {
         id: document.getElementById('f-id').value.trim(),
         name: document.getElementById('f-name').value.trim(),
         description: document.getElementById('f-desc').value.trim(),
+        project: (document.getElementById('f-project') || {}).value || null,
         require_field_name: document.getElementById('f-require').value === 'true',
         system_prompt: document.getElementById('f-system').value,
         field_defs: getFieldDefs().map(s => s.trim()),
