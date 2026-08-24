@@ -83,6 +83,10 @@ def client(db):
         yield db
 
     app.dependency_overrides[get_db] = _override
-    with TestClient(app) as c:
-        yield c
-    app.dependency_overrides.clear()
+    try:
+        with TestClient(app) as c:
+            yield c
+    finally:
+        # 放 finally 且用 pop：lifespan 现在会做建库/首次导入，yield 之前抛异常
+        # 时旧写法的 clear() 会被跳过，把覆盖漏给后续用例。
+        app.dependency_overrides.pop(get_db, None)

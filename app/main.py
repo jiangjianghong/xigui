@@ -28,7 +28,7 @@ from app.api import (
     health,
     history,
 )
-from app.core.config import PROJECT_ROOT, get_config, get_rules
+from app.core.config import PROJECT_ROOT, get_config
 from app.core.logging import setup_logging
 
 # 必须最先调用，否则后续模块的 logger 输出可能用默认配置
@@ -38,19 +38,36 @@ log = logging.getLogger("aicheck.boot")
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    from app.core.startup import seed_rules_if_empty
+    from app.db import repo_rules
+    from app.db.bootstrap import bootstrap_database
+    from app.db.session import get_db, get_sessionmaker
+
     cfg = get_config()
     llm_cfg = cfg.get("llm", {})
-    rules = get_rules()
-    log.info(
-        "服务启动 host=%s port=%s llm.model=%s backend=%s rules=%d",
-        cfg.get("app", {}).get("host"),
-        cfg.get("app", {}).get("port"),
-        llm_cfg.get("model"),
-        llm_cfg.get("backend"),
-        len(rules),
-    )
-    for r in rules:
-        log.info("  规则 %s %s", r.get("id"), r.get("name", ""))
+
+    # 测试通过 dependency_overrides 注入自己的会话,此时不应连真 MySQL
+    if get_db in _app.dependency_overrides:
+        log.info("检测到会话依赖被覆盖(测试环境),跳过建库建表与首次导入")
+        yield
+        log.info("服务关闭")
+        return
+
+    bootstrap_database()
+
+    with get_sessionmaker()() as db:
+        seed_rules_if_empty(db)
+        rules = repo_rules.list_rules(db)
+        log.info(
+            "服务启动 host=%s port=%s llm.model=%s backend=%s rules=%d",
+            cfg.get("app", {}).get("host"),
+            cfg.get("app", {}).get("port"),
+            llm_cfg.get("model"),
+            llm_cfg.get("backend"),
+            len(rules),
+        )
+        for r in rules:
+            log.info("  规则 %s %s", r.rule_id, r.name or "")
     yield
     log.info("服务关闭")
 

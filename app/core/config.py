@@ -7,13 +7,15 @@
 -----------------------------
 1. 不再使用 ``@lru_cache``。改为基于文件 mtime 的轻量缓存：每次调用都做一次
    ``stat()`` 比对 mtime，只有变化时才重新读 YAML。这样直接编辑挂载的
-   ``config/config.yaml`` 或 ``config/rules.yaml`` 即可在下一次请求时生效，
-   不必重启容器，满足"活配置"的诉求。
-2. 新增 ``get_rules()`` 和 ``reload_rules()``，专门服务规则配置。
-3. ``build_extra_body()`` 保留原样，用于在 dashscope / vllm 两种后端之间
+   ``config/config.yaml`` 即可在下一次请求时生效，不必重启容器。
+2. ``build_extra_body()`` 保留原样，用于在 dashscope / vllm 两种后端之间
    屏蔽 ``enable_thinking`` 传参形式的差异。
-4. 新增 ``get_db_config()`` 和 ``build_db_url()``，读取 ``mysql:`` 节并拼装
+3. 新增 ``get_db_config()`` 和 ``build_db_url()``，读取 ``mysql:`` 节并拼装
    SQLAlchemy 连接串，供 ORM 引擎与建库脚本共用。
+
+规则不再由本模块提供：规则真源已是 MySQL，读路径见 ``app/db/repo_rules.py``。
+``rules_config_path`` 仅用于首次导入与默认导出路径，解析见
+``app/core/startup.resolve_rules_path()``。
 """
 
 from __future__ import annotations
@@ -30,7 +32,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
 _cfg_cache: dict[str, Any] = {"data": None, "mtime": 0.0, "path": None}
-_rules_cache: dict[str, Any] = {"data": None, "mtime": 0.0, "path": None}
 _lock = threading.Lock()
 
 
@@ -70,47 +71,6 @@ def get_config() -> dict[str, Any]:
             _cfg_cache["mtime"] = mtime
             _cfg_cache["path"] = path
         return _cfg_cache["data"]
-
-
-def _resolve_rules_path() -> Path:
-    cfg = get_config()
-    rel = cfg.get("rules_config_path", "config/rules.yaml")
-    p = Path(rel)
-    return p if p.is_absolute() else PROJECT_ROOT / p
-
-
-def get_rules() -> list[dict[str, Any]]:
-    """读取规则列表；基于 mtime 自动重载。
-
-    返回值是 ``rules.yaml`` 中 ``rules`` 节点的 list。
-    """
-    path = _resolve_rules_path()
-    with _lock:
-        try:
-            mtime = path.stat().st_mtime
-        except FileNotFoundError as e:
-            raise FileNotFoundError(f"规则配置不存在: {path}") from e
-        if (
-            _rules_cache["data"] is None
-            or _rules_cache["path"] != path
-            or mtime != _rules_cache["mtime"]
-        ):
-            data = _read_yaml(path)
-            _rules_cache["data"] = data.get("rules", [])
-            _rules_cache["mtime"] = mtime
-            _rules_cache["path"] = path
-        return _rules_cache["data"]
-
-
-def reload_rules() -> int:
-    """强制丢弃规则缓存，下一次 ``get_rules()`` 会从磁盘重新读取。
-
-    返回重新加载后的规则条数。供 ``POST /admin/reload-rules`` 接口调用。
-    """
-    with _lock:
-        _rules_cache["data"] = None
-        _rules_cache["mtime"] = 0.0
-    return len(get_rules())
 
 
 def reload_config() -> dict[str, Any]:
