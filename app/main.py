@@ -14,9 +14,10 @@ import logging
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.exc import OperationalError
 
 from app.api import (
     admin,
@@ -63,6 +64,21 @@ app = FastAPI(
     ),
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(OperationalError)
+def _db_unavailable(_request: Request, exc: OperationalError) -> JSONResponse:
+    """数据库不可用是依赖故障,返 503 而非 500。
+
+    连接池已配 pool_pre_ping,能自愈的断连不会走到这里;走到这里说明
+    库确实连不上,让调用方知道该重试而不是当成业务错误。
+    """
+    log.error("数据库不可用: %s", exc)
+    return JSONResponse(
+        status_code=503,
+        content={"detail": "数据库不可用,请稍后重试"},
+    )
+
 
 app.include_router(health.router)
 app.include_router(compare.router)

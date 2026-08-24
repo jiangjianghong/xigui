@@ -243,7 +243,6 @@ def test_valid_field_defs_accepted(client, seeded, good_defs):
 # 写入后 /compare 立即生效
 # ---------------------------------------------------------------------------
 
-@pytest.mark.xfail(reason="Task 15 把 /compare 切到 DB 后转绿", strict=True)
 def test_create_then_compare_uses_new_rule(client, seeded, monkeypatch):
     captured: dict = {}
 

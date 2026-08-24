@@ -16,24 +16,18 @@ from __future__ import annotations
 import logging
 import time
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
 
-from app.core.config import get_rules
-from app.core.history import get_history_store
 from app.core.llm_client import LLMTimeout, LLMUpstreamError
+from app.db import repo_history, repo_rules
+from app.db.session import get_db
 from app.rules.field_keys import field_keys_for
 from app.rules.registry import build_rule, should_require_field_name
 from app.schemas.compare import CompareRequest, CompareResponse, Cost
 
 router = APIRouter(tags=["compare"])
 log = logging.getLogger("aicheck.compare")
-
-
-def _find_rule_cfg(rule_id: str) -> dict | None:
-    for r in get_rules():
-        if r.get("id") == rule_id:
-            return r
-    return None
 
 
 def _validate_field_keys(rule_id: str, expected: list[str], got: set[str]) -> None:
@@ -64,18 +58,19 @@ def _validate_field_keys(rule_id: str, expected: list[str], got: set[str]) -> No
     response_model_exclude_none=True,
     summary="按指定规则比对若干字段",
 )
-def compare(req: CompareRequest) -> CompareResponse:
+def compare(req: CompareRequest, db: Session = Depends(get_db)) -> CompareResponse:
     t0 = time.perf_counter()
     inputs = req.field_inputs()
     log.info("收到比对请求 rule_id=%s fields=%d", req.rule_id, len(inputs))
 
-    rule_cfg = _find_rule_cfg(req.rule_id)
-    if rule_cfg is None:
+    rule_row = repo_rules.get_by_rule_id(db, req.rule_id)
+    if rule_row is None:
         log.warning("rule_id 不存在: %s", req.rule_id)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"rule_id 不存在: {req.rule_id}",
         )
+    rule_cfg = repo_rules.to_rule_cfg(rule_row)
 
     expected_keys = field_keys_for(rule_cfg)
     _validate_field_keys(req.rule_id, expected_keys, set(inputs))
@@ -133,18 +128,25 @@ def compare(req: CompareRequest) -> CompareResponse:
     # extra 字段可能含 LLM 原始返回片段，仅 debug 级别打印
     log.debug("extra rule_id=%s extra=%s", req.rule_id, res.extra)
 
-    # 记录历史
-    history = get_history_store()
-    history.add({
-        "rule_id": req.rule_id,
-        "rule_name": rule_cfg.get("name", ""),
-        "fields": [{"key": k, **f.model_dump()} for k, f in ordered],
-        "result": res.match,
-        "reason": res.reason,
-        "time_ms": elapsed_ms,
-        "cost": res.usage or {},
-        "raw_request": req.model_dump(),
-    })
+    # 记录历史。写失败不能拖垮本次比对——LLM 已调用、费用已产生、结果已算出,
+    # 因记流水失败而丢弃结果不合理。
+    try:
+        repo_history.add(db, {
+            "rule_id": req.rule_id,
+            "rule_name": rule_row.name or "",
+            "project_key": rule_row.project.key if rule_row.project else None,
+            "project_name": rule_row.project.name if rule_row.project else None,
+            "fields": [{"key": k, **f.model_dump()} for k, f in ordered],
+            "result": res.match,
+            "reason": res.reason,
+            "time_ms": elapsed_ms,
+            "cost": res.usage or {},
+            "raw_request": req.model_dump(),
+        })
+        db.commit()
+    except Exception:  # noqa: BLE001
+        db.rollback()
+        log.exception("历史写入失败,已忽略 rule_id=%s", req.rule_id)
 
     return CompareResponse(
         rule_id=req.rule_id,

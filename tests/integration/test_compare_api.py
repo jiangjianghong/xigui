@@ -1,79 +1,54 @@
-"""``POST /compare`` 端到端集成测试。
+"""``POST /compare`` 端到端集成测试。规则数据源已从 yaml 切到 DB。
 
-所有规则都走 LLM,因此所有 /compare 用例都需要 monkeypatch `chat_json`。
-
-规则数据源是测试自有 fixture(``tests/fixtures/rules.yaml``,固定 R001-R005
-共 5 条),与业务活配置 ``config/rules.yaml`` 解耦——业务侧改活配置不影响测试。
-本文件只读规则、不写规则,因此直接指向 fixture 文件,无需拷贝到 tmp_path。
+夹具见 tests/conftest.py:SQLite in-memory + 依赖覆盖。所有规则都走 LLM,
+因此所有 /compare 用例都需要 monkeypatch `chat_json`。
 
 run:  pytest tests/integration/ -v
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
-from fastapi.testclient import TestClient
 
-from app.main import app
-from app.core import config as cfg_module
+from app.db import repo_history, repo_rules
 from app.rules import llm_rule
 
-client = TestClient(app)
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-FIXTURE_RULES = PROJECT_ROOT / "tests" / "fixtures" / "rules.yaml"
+@pytest.fixture
+def seeded_rules(db):
+    """把该文件原先注入 yaml 的 R001-R005 改为写入 DB,断言部分不变。
 
-
-@pytest.fixture(autouse=True)
-def isolated_rules(monkeypatch):
-    """让所有用例都从 tests/fixtures/rules.yaml 读规则(只读,不拷贝)。"""
-    real_get_config = cfg_module.get_config
-
-    def _fake_get_config():
-        c = dict(real_get_config())
-        c["rules_config_path"] = str(FIXTURE_RULES)
-        return c
-
-    monkeypatch.setattr(cfg_module, "get_config", _fake_get_config)
-    cfg_module.reload_rules()
-    yield
-    # 缓存自愈靠 get_rules 的 path/mtime 比对;此处 monkeypatch 仍生效,reload 只是兜底
-    cfg_module.reload_rules()
-
-
-# ---------------------------------------------------------------------------
-# /health
-# ---------------------------------------------------------------------------
-
-def test_health_reports_rules():
-    resp = client.get("/health")
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["status"] == "ok"
-    assert body["service"] == "ai_cross_check"
-    assert body["rules_loaded"] == 5
-    assert set(body["rule_ids"]) == {"R001", "R002", "R003", "R004", "R005"}
-
-
-# ---------------------------------------------------------------------------
-# 不存在的 rule_id
-# ---------------------------------------------------------------------------
-
-def test_unknown_rule_id_returns_404():
-    resp = client.post("/compare", json={
-        "rule_id": "RXXX",
-        "field_a": {"name": "x", "value": "1"},
-        "field_b": {"name": "x", "value": "1"},
+    R004 是「自定义字段 ID」载体:field_defs 声明两个 slug、require_field_name=true、
+    prompt 引用 {..._name},其余四条是默认 field_a/field_b 的两字段规则。
+    """
+    repo_rules.create(db, {
+        "id": "R001", "name": "项目代码完全一致",
+        "prompt_template": "请判断项目代码是否一致。\nA: {field_a}\nB: {field_b}",
     })
-    assert resp.status_code == 404
-    assert "rule_id 不存在" in resp.json()["detail"]
+    repo_rules.create(db, {
+        "id": "R002", "name": "总投资金额一致",
+        "prompt_template": "请判断金额是否相等。\nA: {field_a}\nB: {field_b}",
+    })
+    repo_rules.create(db, {
+        "id": "R003", "name": "批复时间早于申报时间",
+        "prompt_template": "请判断 A 是否早于 B。\nA: {field_a}\nB: {field_b}",
+    })
+    repo_rules.create(db, {
+        "id": "R004", "name": "建设单位名称基本一致",
+        "field_defs": ["danwei_shenbao", "danwei_pifu"],
+        "require_field_name": True,
+        "prompt_template": (
+            '请判断"{danwei_shenbao_name}"与"{danwei_pifu_name}"是否同一主体。\n'
+            "A ({danwei_shenbao_name}): {danwei_shenbao}\n"
+            "B ({danwei_pifu_name}): {danwei_pifu}"
+        ),
+    })
+    repo_rules.create(db, {
+        "id": "R005", "name": "建设内容详情完全一致",
+        "prompt_template": "请判断建设内容是否一致。\nA: {field_a}\nB: {field_b}",
+    })
+    db.commit()
 
-
-# ---------------------------------------------------------------------------
-# 通用 LLM mock
-# ---------------------------------------------------------------------------
 
 @pytest.fixture
 def mock_llm(monkeypatch):
@@ -91,10 +66,38 @@ def mock_llm(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# /health
+# ---------------------------------------------------------------------------
+
+def test_health_reports_rules(client, seeded_rules):
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "ok"
+    assert body["service"] == "ai_cross_check"
+    assert body["rules_loaded"] == 5
+    assert set(body["rule_ids"]) == {"R001", "R002", "R003", "R004", "R005"}
+
+
+# ---------------------------------------------------------------------------
+# 不存在的 rule_id
+# ---------------------------------------------------------------------------
+
+def test_unknown_rule_id_returns_404(client, seeded_rules):
+    resp = client.post("/compare", json={
+        "rule_id": "RXXX",
+        "field_a": {"name": "x", "value": "1"},
+        "field_b": {"name": "x", "value": "1"},
+    })
+    assert resp.status_code == 404
+    assert "rule_id 不存在" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
 # R001-R005 都走 LLM,统一用 mock 跑通即可
 # ---------------------------------------------------------------------------
 
-def test_R001_returns_true_when_llm_says_match(mock_llm):
+def test_R001_returns_true_when_llm_says_match(client, seeded_rules, mock_llm):
     mock_llm["content"] = '{"match": true, "reason": "项目代码一致"}'
     resp = client.post("/compare", json={
         "rule_id": "R001",
@@ -111,7 +114,7 @@ def test_R001_returns_true_when_llm_says_match(mock_llm):
     assert body["field_b"]["value"] == "2024-001"
 
 
-def test_R001_returns_false_when_llm_says_no_match(mock_llm):
+def test_R001_returns_false_when_llm_says_no_match(client, seeded_rules, mock_llm):
     mock_llm["content"] = '{"match": false, "reason": "编号不同"}'
     resp = client.post("/compare", json={
         "rule_id": "R001",
@@ -124,7 +127,7 @@ def test_R001_returns_false_when_llm_says_no_match(mock_llm):
     assert "编号不同" in body["reason"]
 
 
-def test_R002_numeric_unit_conversion(mock_llm):
+def test_R002_numeric_unit_conversion(client, seeded_rules, mock_llm):
     mock_llm["content"] = '{"match": true, "reason": "1.2亿 = 12000万元"}'
     resp = client.post("/compare", json={
         "rule_id": "R002",
@@ -136,7 +139,7 @@ def test_R002_numeric_unit_conversion(mock_llm):
     assert body["result"] is True
 
 
-def test_R003_time_order_pass(mock_llm):
+def test_R003_time_order_pass(client, seeded_rules, mock_llm):
     mock_llm["content"] = '{"match": true, "reason": "1月10日早于2月1日"}'
     resp = client.post("/compare", json={
         "rule_id": "R003",
@@ -146,7 +149,7 @@ def test_R003_time_order_pass(mock_llm):
     assert resp.json()["result"] is True
 
 
-def test_R004_semantic_similar_pass(mock_llm):
+def test_R004_semantic_similar_pass(client, seeded_rules, mock_llm):
     mock_llm["content"] = '{"match": true, "reason": "简称与全称指向同一主体"}'
     resp = client.post("/compare", json={
         "rule_id": "R004",
@@ -160,7 +163,7 @@ def test_R004_semantic_similar_pass(mock_llm):
     assert body["cost"]["total_tokens"] == 108
 
 
-def test_R005_invalid_json_returns_false(mock_llm):
+def test_R005_invalid_json_returns_false(client, seeded_rules, mock_llm):
     mock_llm["content"] = "我觉得这两段内容基本一致。"
     resp = client.post("/compare", json={
         "rule_id": "R005",
@@ -174,10 +177,10 @@ def test_R005_invalid_json_returns_false(mock_llm):
 
 
 # ---------------------------------------------------------------------------
-# /admin/reload-rules
+# /admin/reload-rules（已降级为返回 DB 当前条数）
 # ---------------------------------------------------------------------------
 
-def test_admin_reload_rules():
+def test_admin_reload_rules(client, seeded_rules):
     resp = client.post("/admin/reload-rules")
     assert resp.status_code == 200
     body = resp.json()
@@ -189,7 +192,7 @@ def test_admin_reload_rules():
 # require_field_name 校验
 # ---------------------------------------------------------------------------
 
-def test_field_name_optional_for_normal_rule(mock_llm):
+def test_field_name_optional_for_normal_rule(client, seeded_rules, mock_llm):
     """R001 没显式 require_field_name,name 可省略。"""
     mock_llm["content"] = '{"match": true, "reason": "一致"}'
     resp = client.post("/compare", json={
@@ -201,17 +204,15 @@ def test_field_name_optional_for_normal_rule(mock_llm):
     assert resp.json()["result"] is True
 
 
-def test_single_field_compare(mock_llm, monkeypatch):
+def test_single_field_compare(client, db, mock_llm):
     """单字段校验场景:注入一条只引用 {field_a} 的规则,只传 field_a。"""
-    from app.api import compare as compare_module
-
-    single_rule = {
+    repo_rules.create(db, {
         "id": "RSINGLE",
         "name": "单字段规模数量校验",
         "require_field_name": False,
         "prompt_template": "请判断以下建设规模描述是否含明确数量:{field_a}",
-    }
-    monkeypatch.setattr(compare_module, "get_rules", lambda: [single_rule])
+    })
+    db.commit()
 
     mock_llm["content"] = '{"match": true, "reason": "含明确规模数量"}'
     resp = client.post("/compare", json={
@@ -222,17 +223,15 @@ def test_single_field_compare(mock_llm, monkeypatch):
     assert resp.json()["result"] is True
 
 
-def test_require_field_name_explicit_missing_returns_422(monkeypatch):
-    """yaml 显式 require_field_name=true 时,缺 name 必须 422。"""
-    from app.api import compare as compare_module
-
-    fake_rule = {
+def test_require_field_name_explicit_missing_returns_422(client, db):
+    """规则显式 require_field_name=true 时,缺 name 必须 422。"""
+    repo_rules.create(db, {
         "id": "RTEST",
         "name": "test",
         "require_field_name": True,
         "prompt_template": "A: {field_a} B: {field_b}",
-    }
-    monkeypatch.setattr(compare_module, "get_rules", lambda: [fake_rule])
+    })
+    db.commit()
 
     resp = client.post("/compare", json={
         "rule_id": "RTEST",
@@ -245,8 +244,8 @@ def test_require_field_name_explicit_missing_returns_422(monkeypatch):
     assert "field_b.name" in detail
 
 
-def test_require_field_name_R004_missing_returns_422(mock_llm):
-    """R004 yaml 显式 require_field_name: true,缺 name 应 422。"""
+def test_require_field_name_R004_missing_returns_422(client, seeded_rules, mock_llm):
+    """R004 显式 require_field_name: true,缺 name 应 422。"""
     resp = client.post("/compare", json={
         "rule_id": "R004",
         "danwei_shenbao": {"value": "贵州省XX建设有限公司"},
@@ -256,7 +255,7 @@ def test_require_field_name_R004_missing_returns_422(mock_llm):
     assert "danwei_shenbao.name" in resp.json()["detail"]
 
 
-def test_require_field_name_R004_with_name_passes(monkeypatch):
+def test_require_field_name_R004_with_name_passes(client, seeded_rules, monkeypatch):
     """R004 提供了 name,应正常走通,且 prompt 渲染含字段名。"""
     captured: dict = {}
 
@@ -277,11 +276,13 @@ def test_require_field_name_R004_with_name_passes(monkeypatch):
     assert resp.json()["result"] is True
     user_msg = captured["messages"][-1]["content"]
     assert "建设单位" in user_msg  # name 被渲染进 prompt
+
+
 # ---------------------------------------------------------------------------
 # 字段键一致性校验
 # ---------------------------------------------------------------------------
 
-def test_legacy_fields_array_returns_422():
+def test_legacy_fields_array_returns_422(client, seeded_rules):
     """旧版 fields 数组已不再受理:值不是 {name?, value} 对象。"""
     resp = client.post("/compare", json={
         "rule_id": "R001",
@@ -290,13 +291,13 @@ def test_legacy_fields_array_returns_422():
     assert resp.status_code == 422
 
 
-def test_no_field_key_returns_422():
+def test_no_field_key_returns_422(client, seeded_rules):
     resp = client.post("/compare", json={"rule_id": "R001"})
     assert resp.status_code == 422
     assert "field_a" in resp.text
 
 
-def test_missing_one_key_returns_422():
+def test_missing_one_key_returns_422(client, seeded_rules):
     """只传 field_a,缺 field_b。"""
     resp = client.post("/compare", json={
         "rule_id": "R001",
@@ -307,7 +308,7 @@ def test_missing_one_key_returns_422():
     assert "field_b" in resp.json()["detail"]
 
 
-def test_extra_key_returns_422():
+def test_extra_key_returns_422(client, seeded_rules):
     """多传一个未知键。"""
     resp = client.post("/compare", json={
         "rule_id": "R001",
@@ -320,7 +321,7 @@ def test_extra_key_returns_422():
     assert "field_c" in resp.json()["detail"]
 
 
-def test_typo_key_returns_422():
+def test_typo_key_returns_422(client, seeded_rules):
     """拼错键名:同时报缺少与不接受,不会静默当成空串发给 LLM。"""
     resp = client.post("/compare", json={
         "rule_id": "R001",
@@ -332,7 +333,7 @@ def test_typo_key_returns_422():
     assert "field_b" in detail and "field_bb" in detail
 
 
-def test_letter_keys_rejected_for_custom_id_rule():
+def test_letter_keys_rejected_for_custom_id_rule(client, seeded_rules):
     """R004 配了 field_defs,传 field_a/field_b 必须 422。"""
     resp = client.post("/compare", json={
         "rule_id": "R004",
@@ -345,18 +346,16 @@ def test_letter_keys_rejected_for_custom_id_rule():
     assert "field_a" in detail
 
 
-def test_custom_id_renders_into_prompt(mock_llm, monkeypatch):
+def test_custom_id_renders_into_prompt(client, db, monkeypatch):
     """自定义 ID 端到端:键名进请求、占位符进 prompt、键名回显。"""
-    from app.api import compare as compare_module
-
-    triple_rule = {
+    repo_rules.create(db, {
         "id": "RTRIPLE",
         "name": "三方金额一致",
         "field_defs": ["shenbao_amount", "pifu_amount", "hetong_amount"],
         "require_field_name": False,
         "prompt_template": "申报:{shenbao_amount} 批复:{pifu_amount} 合同:{hetong_amount}",
-    }
-    monkeypatch.setattr(compare_module, "get_rules", lambda: [triple_rule])
+    })
+    db.commit()
 
     captured: dict = {}
 
@@ -386,7 +385,7 @@ def test_custom_id_renders_into_prompt(mock_llm, monkeypatch):
     assert "合同:5000000元" in user_msg
 
 
-def test_response_omits_unused_field_keys(mock_llm):
+def test_response_omits_unused_field_keys(client, seeded_rules, mock_llm):
     """response_model_exclude_none:未使用的键不出现在响应里。"""
     mock_llm["content"] = '{"match": true, "reason": "项目代码一致"}'
     resp = client.post("/compare", json={
@@ -403,17 +402,15 @@ def test_response_omits_unused_field_keys(mock_llm):
     assert "fields" not in body
 
 
-def test_history_records_field_key(mock_llm):
+def test_history_records_field_key(client, db, seeded_rules, mock_llm):
     """历史落库的 fields 每项带 key,供 UI 显示键名。"""
-    from app.core.history import get_history_store
-
     mock_llm["content"] = '{"match": true, "reason": "一致"}'
     client.post("/compare", json={
         "rule_id": "R001",
         "field_a": {"value": "2024-001"},
         "field_b": {"value": "2024-001"},
     })
-    items = get_history_store().list(rule_id="R001", limit=1)["items"]
+    items = repo_history.list_records(db, rule_id="R001", limit=1)["items"]
     assert items, "历史里应有刚写入的记录"
     fields = items[0]["fields"]
     assert [f["key"] for f in fields] == ["field_a", "field_b"]
