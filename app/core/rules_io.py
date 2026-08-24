@@ -5,15 +5,10 @@
 
 为什么仍用 ruamel 而不是 PyYAML：导出时 ``prompt_template`` 必须是 ``|``
 块格式，否则几百字的 prompt 会挤成一行带 ``\\n`` 的字符串，既没法看也没法改。
-
-（旧的 ``load_rules_doc`` / ``save_rules_doc`` / ``list_rules`` / ``find_rule_index``
-仍保留给 ``admin_rules.py`` 的 yaml 写路径用，Task 12 切库后再清理。）
 """
 
 from __future__ import annotations
 
-import threading
-from pathlib import Path
 from typing import Any
 
 from ruamel.yaml import YAML
@@ -24,47 +19,6 @@ _yaml = YAML(typ="rt")
 _yaml.preserve_quotes = True
 _yaml.indent(mapping=2, sequence=4, offset=2)
 _yaml.width = 4096  # 不要自动换行
-
-# 写文件时加进程内串行化,避免两个并发 PUT 互相覆盖
-_write_lock = threading.Lock()
-
-
-def load_rules_doc(path: Path) -> Any:
-    """读取整个 yaml 文档(含 ``rules`` 节点之外的所有注释/字段)。
-
-    返回 ruamel 的 CommentedMap;通常用法是 ``doc["rules"]`` 取规则 list。
-    """
-    with path.open("r", encoding="utf-8") as f:
-        data = _yaml.load(f)
-    if data is None:
-        # 空文件:返回一个带 rules 节点的最小骨架
-        from ruamel.yaml.comments import CommentedMap, CommentedSeq
-
-        data = CommentedMap()
-        data["rules"] = CommentedSeq()
-    return data
-
-
-def save_rules_doc(path: Path, doc: Any) -> None:
-    """把整个 yaml 文档写回磁盘,保留注释、字段顺序、缩进、引号。"""
-    with _write_lock:
-        with path.open("w", encoding="utf-8") as f:
-            _yaml.dump(doc, f)
-
-
-def list_rules(doc: Any) -> list[Any]:
-    """从文档中取规则 list。若没有 ``rules`` 节点则返回空 list。"""
-    rules = doc.get("rules") if isinstance(doc, dict) else None
-    return list(rules) if rules else []
-
-
-def find_rule_index(doc: Any, rule_id: str) -> int:
-    """按 id 在 ``doc["rules"]`` 里找下标,找不到返 -1。"""
-    rules = doc.get("rules") or []
-    for i, r in enumerate(rules):
-        if r.get("id") == rule_id:
-            return i
-    return -1
 
 
 def normalize_rule(cfg: dict[str, Any]) -> Any:

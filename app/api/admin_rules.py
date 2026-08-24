@@ -1,12 +1,10 @@
 """规则 CRUD 后端,服务 UI 的增删改查。
 
 数据流:
-    UI <--HTTP--> 本模块 <--ruamel.yaml--> config/rules.yaml
-                                    \\--reload_rules()--> compare 路由的缓存
+    UI <--HTTP--> 本模块 <--repo_rules--> MySQL
 
-所有写操作完成后会立即调用 ``reload_rules()``,让 ``/compare`` 端点在下一次请求时
-使用最新规则;同时由于 yaml 文件 mtime 也变了,容器外的其他进程(若存在)同样会
-自动 reload。
+规则真源已是 MySQL。``config/rules.yaml`` 只在导入导出时参与,见
+``app/api/admin_import_export.py``。
 """
 
 from __future__ import annotations
@@ -14,117 +12,105 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy.orm import Session
 
-from app.core.config import PROJECT_ROOT, get_config, reload_rules
-from app.core.rules_io import (
-    find_rule_index,
-    list_rules,
-    load_rules_doc,
-    normalize_rule,
-    save_rules_doc,
-)
-from app.schemas.rules import RuleIn
+from app.db import repo_projects, repo_rules
+from app.db.session import get_db
+from app.schemas.rules import RuleIn, RuleOut  # noqa: F401  (RuleOut 供文档引用)
 
 router = APIRouter(tags=["admin-rules"])
 log = logging.getLogger("aicheck.admin.rules")
 
-
-# ---------------------------------------------------------------------------
-# 工具函数
-# ---------------------------------------------------------------------------
-
-def _rules_yaml_path():
-    """解析 rules.yaml 绝对路径,沿用 config.yaml 里 ``rules_config_path``。"""
-    cfg = get_config()
-    rel = cfg.get("rules_config_path", "config/rules.yaml")
-    from pathlib import Path
-
-    p = Path(rel)
-    return p if p.is_absolute() else PROJECT_ROOT / p
+UNASSIGNED = "__none__"
 
 
-def _to_plain_dict(rule: Any) -> dict[str, Any]:
-    """把 ruamel CommentedMap 转成普通 dict,便于 JSON 序列化。"""
-    out: dict[str, Any] = {}
-    for k, v in rule.items():
-        if isinstance(v, list):
-            out[k] = list(v)
-        else:
-            out[k] = v
-    return out
+def _resolve_project_id(db: Session, key: str | None) -> int | None:
+    """项目 key → id。key 为空返 None(未分组);key 不存在返 422。"""
+    if not key:
+        return None
+    project = repo_projects.get_by_key(db, key)
+    if project is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"项目不存在: {key}",
+        )
+    return project.id
 
-
-# ---------------------------------------------------------------------------
-# 路由
-# ---------------------------------------------------------------------------
 
 @router.get("/rules", summary="列出所有规则")
-def list_all_rules() -> dict[str, Any]:
-    path = _rules_yaml_path()
-    doc = load_rules_doc(path)
-    items = [_to_plain_dict(r) for r in list_rules(doc)]
+def list_all_rules(
+    project: str | None = Query(
+        None, description=f"按项目 key 筛选；传 {UNASSIGNED} 查未分组"
+    ),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    if project == UNASSIGNED:
+        rows = repo_rules.list_rules(db, unassigned=True)
+    else:
+        rows = repo_rules.list_rules(db, project_key=project)
+    items = [repo_rules.to_api_dict(r) for r in rows]
     return {"count": len(items), "rules": items}
 
 
 @router.get("/rules/{rule_id}", summary="按 id 查询单条规则")
-def get_single_rule(rule_id: str) -> dict[str, Any]:
-    path = _rules_yaml_path()
-    doc = load_rules_doc(path)
-    idx = find_rule_index(doc, rule_id)
-    if idx < 0:
+def get_single_rule(rule_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    row = repo_rules.get_by_rule_id(db, rule_id)
+    if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"rule_id 不存在: {rule_id}",
         )
-    return _to_plain_dict(doc["rules"][idx])
+    return repo_rules.to_api_dict(row)
 
 
 @router.post("/rules", summary="新增规则", status_code=status.HTTP_201_CREATED)
-def create_rule(payload: RuleIn) -> dict[str, Any]:
-    path = _rules_yaml_path()
-    doc = load_rules_doc(path)
-    if find_rule_index(doc, payload.id) >= 0:
+def create_rule(payload: RuleIn, db: Session = Depends(get_db)) -> dict[str, Any]:
+    if repo_rules.get_by_rule_id(db, payload.id) is not None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"rule_id 已存在: {payload.id}",
         )
 
-    rule_node = normalize_rule(payload.model_dump(exclude_none=True))
-    if doc.get("rules") is None:
-        from ruamel.yaml.comments import CommentedSeq
-        doc["rules"] = CommentedSeq()
-    doc["rules"].append(rule_node)
+    project_id = _resolve_project_id(db, payload.project)
+    data = payload.model_dump(exclude_none=True)
+    data.pop("project", None)
 
-    save_rules_doc(path, doc)
-    n = reload_rules()
+    repo_rules.create(db, data, project_id=project_id)
+    db.commit()
+
+    n = repo_rules.count(db)
     log.info("新增规则 id=%s,当前共 %d 条", payload.id, n)
     return {"status": "ok", "rule_id": payload.id, "rules_loaded": n}
 
 
 @router.put("/rules/{rule_id}", summary="按 id 全量修改规则(支持 rename:body.id != url id)")
-def update_rule(rule_id: str, payload: RuleIn) -> dict[str, Any]:
-    path = _rules_yaml_path()
-    doc = load_rules_doc(path)
-    idx = find_rule_index(doc, rule_id)
-    if idx < 0:
+def update_rule(
+    rule_id: str, payload: RuleIn, db: Session = Depends(get_db)
+) -> dict[str, Any]:
+    row = repo_rules.get_by_rule_id(db, rule_id)
+    if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"rule_id 不存在: {rule_id}",
         )
 
-    # rename:新 id 不能撞上其他规则
     if payload.id != rule_id:
-        clash = find_rule_index(doc, payload.id)
-        if clash >= 0 and clash != idx:
+        clash = repo_rules.get_by_rule_id(db, payload.id)
+        if clash is not None and clash.id != row.id:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"目标 id 已被占用: {payload.id}",
             )
 
-    doc["rules"][idx] = normalize_rule(payload.model_dump(exclude_none=True))
-    save_rules_doc(path, doc)
-    n = reload_rules()
+    project_id = _resolve_project_id(db, payload.project)
+    data = payload.model_dump(exclude_none=True)
+    data.pop("project", None)
+
+    repo_rules.update(db, row, data, project_id=project_id, set_project=True)
+    db.commit()
+
+    n = repo_rules.count(db)
     if payload.id != rule_id:
         log.info("更新规则 id=%s → %s,当前共 %d 条", rule_id, payload.id, n)
     else:
@@ -133,18 +119,17 @@ def update_rule(rule_id: str, payload: RuleIn) -> dict[str, Any]:
 
 
 @router.delete("/rules/{rule_id}", summary="按 id 删除规则")
-def delete_rule(rule_id: str) -> dict[str, Any]:
-    path = _rules_yaml_path()
-    doc = load_rules_doc(path)
-    idx = find_rule_index(doc, rule_id)
-    if idx < 0:
+def delete_rule(rule_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    row = repo_rules.get_by_rule_id(db, rule_id)
+    if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"rule_id 不存在: {rule_id}",
         )
 
-    del doc["rules"][idx]
-    save_rules_doc(path, doc)
-    n = reload_rules()
+    repo_rules.delete(db, row)
+    db.commit()
+
+    n = repo_rules.count(db)
     log.info("删除规则 id=%s,当前共 %d 条", rule_id, n)
     return {"status": "ok", "rule_id": rule_id, "rules_loaded": n}

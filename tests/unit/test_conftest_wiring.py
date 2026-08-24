@@ -88,7 +88,6 @@ def test_on_delete_set_null_is_enforced_by_db(db):
     assert db.query(Rule).filter_by(rule_id="R001").one().project_id is None
 
 
-@pytest.mark.xfail(reason="Task 12 把 /admin/rules 切到 DB 后转绿", strict=True)
 def test_client_uses_same_session(client, db):
     """TestClient 与 db 夹具必须共用同一会话，否则测试里写的数据接口看不见。"""
     db.add(Rule(rule_id="R001", prompt_template="t"))
