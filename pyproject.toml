@@ -26,6 +26,13 @@ dev = [
     "respx",
 ]
 
+[tool.mypy]
+# PyYAML 无内建类型标注。不为它引入 types-PyYAML dev 依赖(离线构建更省事),
+# 直接告诉 mypy 别对缺 stub 的 yaml 报 import-untyped。
+[[tool.mypy.overrides]]
+module = "yaml"
+ignore_missing_imports = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
 
