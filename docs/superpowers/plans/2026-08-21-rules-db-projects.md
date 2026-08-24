@@ -2310,10 +2310,12 @@ from app.core.rules_io import (
     normalize_rule,
     save_rules_doc,
 )
-from app.schemas.rules import RuleIn, RuleOut
+from app.schemas.rules import RuleIn
 ```
 
-（本任务只搬家不改行为，`admin_rules.py` 仍走 yaml，Task 12 才切 DB。）
+（本任务只搬家不改行为，`admin_rules.py` 仍走 yaml，Task 12 才切 DB。
+只导入 `RuleIn`：本模块的路由返回 `dict`，不引用 `RuleOut`，导入它会触发 F401。
+`RuleOut` 定义留在 `schemas/rules.py` 供 Task 12 与文档引用。）
 
 - [ ] **Step 5: 跑全量测试确认无回归**
 
