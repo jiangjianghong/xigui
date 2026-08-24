@@ -3550,6 +3550,14 @@ git commit -m "feat!: 规则 CRUD 切到 MySQL
 BREAKING: 直接编辑 config/rules.yaml 不再自动生效，须走导入。"
 ```
 
+### 实施记录（2026-08-24）
+
+commit `185d68d`（切库）+ `b1844c3`（刷绿基线）。全量 226 passed, 1 xfailed。
+
+**计划的测试文件里有一条跨任务依赖没标出来：** `test_create_then_compare_uses_new_rule` 建规则后调 `/compare`，但 `/compare` 的 `_find_rule_cfg` 到 Task 15 才切库，此刻仍走 `get_rules()` 读 yaml，看不见新建到测试 DB 的 R999。这条在 Task 12 无法通过。已按既有模式标 `@pytest.mark.xfail(strict=True)`，Task 15 切库后它会 xpass，strict 模式自动报错提醒摘标记——与 Task 5→12 的 `test_client_uses_same_session` 同一套自清理机制。计划 Step 5「全部 passed」的表述对这条不成立，应为「全部 passed + 1 xfailed」。
+
+**顺带刷绿了全仓基线（单独 chore 提交）：** 切库后 `test_admin_rules.py` 重写、`rules_io.py` 清理，全仓只剩两个预存告警——`main.py` 未用的 `pathlib.Path`（F401）与 `config.py` 的 `import yaml`（mypy import-untyped，PyYAML 无 stub）。前者直接删；后者加 `[tool.mypy]` override 而非引 types-PyYAML 依赖（离线构建友好）。至此 `ruff check .` 与 `mypy app` 均全绿，Task 13-17 的全仓门禁才可信。
+
 ---
 
 ## Task 13: 项目接口
