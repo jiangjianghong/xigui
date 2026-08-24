@@ -1087,7 +1087,9 @@ Create `tests/unit/test_conftest_wiring.py`:
 
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import text
+from sqlalchemy.exc import IntegrityError
 
 from app.db.models import Project, Rule
 
@@ -1106,15 +1108,33 @@ def test_foreign_keys_enabled(db):
     assert on == 1
 
 
-def test_on_delete_set_null_actually_works(db):
+def test_foreign_key_rejects_dangling_project_id(db):
+    """外键真生效的话，指向不存在项目的 project_id 必须被拒。
+
+    这是对 PRAGMA 最直接的验证：约束没开的话这行会安静地写进去。
+    """
+    db.add(Rule(rule_id="R001", prompt_template="t", project_id=99999))
+    with pytest.raises(IntegrityError):
+        db.commit()
+    db.rollback()
+
+
+def test_on_delete_set_null_is_enforced_by_db(db):
+    """删项目后规则的 project_id 变 NULL——且这必须是**数据库**做的。
+
+    删除刻意走原生 SQL 而不是 ``db.delete(p)``：走 ORM 的话，SQLAlchemy
+    会自己加载 Project.rules 并把子对象的 project_id 置 NULL（默认 cascade），
+    那样即使 SQLite 外键完全没启用，这条测试照样绿——验证的就成了 ORM 行为，
+    而不是本测试真正关心的 DB 约束。
+    """
     p = Project(key="demo", name="演示")
     db.add(p)
     db.flush()
-    r = Rule(rule_id="R001", prompt_template="t", project_id=p.id)
-    db.add(r)
+    db.add(Rule(rule_id="R001", prompt_template="t", project_id=p.id))
     db.commit()
+    pid = p.id
 
-    db.delete(p)
+    db.execute(text("DELETE FROM projects WHERE id = :id"), {"id": pid})
     db.commit()
     db.expire_all()
 
@@ -1224,25 +1244,25 @@ def client(db):
     app.dependency_overrides.clear()
 ```
 
-- [ ] **Step 4: 跑测试确认前三个通过**
+- [ ] **Step 4: 跑测试确认前四条通过**
 
 Run: `uv run pytest tests/unit/test_conftest_wiring.py -v -k "not client_uses"`
-Expected: 3 passed
+Expected: 4 passed
 
-`test_client_uses_same_session` 依赖 Task 12 把 `/admin/rules` 切到 DB，现在仍读 yaml。暂时跳过，Task 12 结束时它必须转绿。
+`test_client_uses_same_session` 依赖 Task 12 把 `/admin/rules` 切到 DB，现在仍读 yaml（会返回 `config/rules.yaml` 里真实的 54 条），所以断言 `count == 1` 必失败。下一步标记它。
 
 - [ ] **Step 5: 标记待转绿用例**
 
-在 `test_client_uses_same_session` 上方加：
+在 `test_client_uses_same_session` 上方加装饰器（`import pytest` 已在文件顶部）：
 
 ```python
-import pytest
-
 @pytest.mark.xfail(reason="Task 12 把 /admin/rules 切到 DB 后转绿", strict=True)
 ```
 
+`strict=True` 是有意的：Task 12 完成后这条会 xpass，而 strict 模式下 xpass 算失败——等于自动提醒「该摘标记了」，不会悄悄留一个永久 xfail 在那儿。
+
 Run: `uv run pytest tests/unit/test_conftest_wiring.py -v`
-Expected: 3 passed, 1 xfailed
+Expected: 4 passed, 1 xfailed
 
 - [ ] **Step 6: 提交**
 
