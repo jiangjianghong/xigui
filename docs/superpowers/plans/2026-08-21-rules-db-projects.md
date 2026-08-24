@@ -4512,6 +4512,23 @@ git commit -m "feat(compare): 规则改从 DB 读取
 - OperationalError 全局处理器返 503：依赖不可用不是业务错误"
 ```
 
+### 实施记录（2026-08-24）
+
+commit `ec15483`。全量 270 passed（此前那条 strict-xfail 转正常通过，全套已无 xfailed）。
+
+**Step 5 的隐含依赖，导致两个端点提前切库。** 计划要求「test_compare_api 全部改用 seeded_rules(DB) 且断言一律不改」。但 `test_health_reports_rules` 断言 5 条、`test_admin_reload_rules` 断言 5 条——只有当 `/health` 与 `/admin/reload-rules` 也读 DB 时这两条才成立。因此本任务**一并把 health.py 与 admin.py 切到 DB**：
+
+- `health.py`：`get_rules()` → `repo_rules.list_rules(db)`，report DB 条数与 rule_ids。
+- `admin.py` 的 `reload-rules`：降级为返回 `repo_rules.count(db)` ——这正是**计划 Task 17 Step 7** 的内容，现已提前完成。
+
+**对 Task 17 的连带影响（执行到那里时注意）：**
+- Task 17 Step 7「降级 reload-rules」已在本任务完成，届时跳过。
+- Task 17 Step 6 要删 `config.get_rules`。本任务后，`get_rules` 的使用者只剩 `main.py` 的旧 lifespan（Task 17 Step 4 正好重写它）。health/admin/compare 都已不再引用，故 Task 17 删 `get_rules` 不会再波及它们。
+
+**test_compare_api.py 全量重写。** 原文件用模块级 `TestClient(app)`（不覆盖 get_db）+ yaml `isolated_rules` 夹具，三条用例还 `monkeypatch(compare_module, "get_rules", ...)`。切库后：（1）改用 conftest 的 `client`（带 DB 覆盖）；（2）`isolated_rules` → `seeded_rules`（往 DB 播种 R001-R005，R004 保留 field_defs+require_field_name）；（3)三条 monkeypatch get_rules 的用例改为直接往 DB 播种 RSINGLE/RTEST/RTRIPLE——`get_rules` 已从 compare.py 删除，再 monkeypatch 它只会 AttributeError；（4）`test_history_records_field_key` 从读内存 `get_history_store()` 改为读 `repo_history.list_records(db)`。断言全部保持不变。
+
+**三条承重新行为**（切库引入的）均有对应用例且验证过失败态可区分：503 处理器（无它则异常上抛，非 503）、历史写失败返 200（无 try/except 则走 503 处理器）、历史快照不随项目删除消失。
+
 ---
 
 ## Task 16: 历史接口切到 DB
