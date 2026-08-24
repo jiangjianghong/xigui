@@ -133,14 +133,14 @@ Expected: FAIL，`AttributeError: module 'app.core.config' has no attribute 'get
 
 - [ ] **Step 5: 实现**
 
-`app/core/config.py` 顶部 import 区加 `from urllib.parse import quote_plus`，文件尾部追加：
+`app/core/config.py` 顶部 import 区加 `from urllib.parse import quote`，文件尾部追加：
 
 ```python
 # ---------------------------------------------------------------------------
 # 数据库配置
 # ---------------------------------------------------------------------------
 
-_DB_DEFAULTS = {
+_DB_DEFAULTS: dict[str, Any] = {
     "host": "127.0.0.1",
     "port": 3306,
     "database": "ai_cross_check",
@@ -154,18 +154,25 @@ _DB_DEFAULTS = {
 
 
 def get_db_config() -> dict[str, Any]:
-    """读取 ``mysql:`` 节，环境变量 ``MYSQL_*`` 优先于配置文件。
+    """读取 ``mysql:`` 节，缺项回落到 ``_DB_DEFAULTS``。
 
-    分离字段而非单行连接串:改起来不易出错,也便于逐项做环境变量覆盖。
+    其中 ``host`` ``port`` ``database`` ``username`` ``password`` 这五项额外支持
+    同名环境变量覆盖（``MYSQL_HOST`` 等），优先级高于配置文件——这几项是跨环境
+    部署时真正会变的。其余四项只读配置文件。
+
+    分离字段而非单行连接串：改起来不易出错，也便于逐项做环境变量覆盖。
     """
     raw = get_config().get("mysql") or {}
 
-    def pick(key: str) -> Any:
-        env = os.getenv(f"MYSQL_{key.upper()}")
-        if env not in (None, ""):
-            return env
+    def take(key: str) -> Any:
+        """yaml → 默认值。"""
         val = raw.get(key)
         return val if val not in (None, "") else _DB_DEFAULTS[key]
+
+    def pick(key: str) -> Any:
+        """环境变量 → yaml → 默认值。"""
+        env = os.getenv(f"MYSQL_{key.upper()}")
+        return env if env not in (None, "") else take(key)
 
     return {
         "host": str(pick("host")),
@@ -173,24 +180,31 @@ def get_db_config() -> dict[str, Any]:
         "database": str(pick("database")),
         "username": str(pick("username")),
         "password": str(pick("password")),
-        "charset": str(raw.get("charset") or _DB_DEFAULTS["charset"]),
-        "pool_size": int(raw.get("pool_size") or _DB_DEFAULTS["pool_size"]),
-        "max_overflow": int(raw.get("max_overflow") or _DB_DEFAULTS["max_overflow"]),
-        "echo": bool(raw.get("echo", False)),
+        "charset": str(take("charset")),
+        "pool_size": int(take("pool_size")),
+        "max_overflow": int(take("max_overflow")),
+        "echo": bool(take("echo")),
     }
 
 
 def build_db_url(*, with_database: bool = True) -> str:
     """拼装 SQLAlchemy 连接串。
 
-    用户名密码必须过 ``quote_plus``——密码含 ``@`` ``:`` ``/`` ``#`` 任一字符时,
-    未编码的连接串会被解析错位,而报错通常指向「host 不存在」,极难定位。
+    用户名密码必须过 ``quote``——含 ``@`` ``:`` ``/`` ``#`` 任一字符时，未编码的
+    连接串会被解析错位，而报错通常指向「host 不存在」，极难定位。
+
+    这里用 ``quote(x, safe="")`` 而非 ``quote_plus``：后者把空格编成 ``+``，而
+    SQLAlchemy 解析 URL 时用的是 ``unquote`` 不是 ``unquote_plus``，``+`` 会原样
+    留在密码里，认证报 Access denied，配置文件却看着完全正常。
+
+    返回值含明文密码，**不要直接打进日志**；需要打印时走
+    ``make_url(url).render_as_string(hide_password=True)``。
 
     ``with_database=False`` 用于建库前连到 server 本身。
     """
     c = get_db_config()
-    user = quote_plus(c["username"])
-    pwd = quote_plus(c["password"])
+    user = quote(c["username"], safe="")
+    pwd = quote(c["password"], safe="")
     db = c["database"] if with_database else ""
     return (
         f"mysql+pymysql://{user}:{pwd}@{c['host']}:{c['port']}/{db}"
@@ -198,10 +212,35 @@ def build_db_url(*, with_database: bool = True) -> str:
     )
 ```
 
+除计划原有的 4 个测试外，另加两个（修复轮补入，见本任务末尾的实施记录）：
+
+```python
+def test_build_url_encodes_space_as_pct20(monkeypatch):
+    """空格必须编成 %20 而非 +。
+
+    quote_plus 会编成 +，而 SQLAlchemy 解析 URL 用的是 unquote 不是
+    unquote_plus，+ 解不回空格，密码就错了。
+    """
+    monkeypatch.setattr(cfg_module, "get_config", lambda: {
+        "mysql": {"username": "al ice", "password": "pass word"}
+    })
+    url = cfg_module.build_db_url()
+    creds = url.split("//", 1)[1].split("@", 1)[0]
+    assert "%20" in creds
+    # 只看 userinfo 段——scheme 里的 mysql+pymysql 自带一个 +
+    assert "+" not in creds
+
+
+def test_build_url_without_database(fake_mysql_cfg):
+    """建库前要连到 server 本身，库名段必须为空。Task 4 走的就是这条路。"""
+    url = cfg_module.build_db_url(with_database=False)
+    assert "@10.0.0.9:3307/?charset=utf8mb4" in url
+```
+
 - [ ] **Step 6: 跑测试确认通过**
 
 Run: `uv run pytest tests/unit/test_db_config.py -v`
-Expected: 4 passed
+Expected: 6 passed
 
 - [ ] **Step 7: 提交**
 
@@ -213,6 +252,18 @@ git commit -m "feat(db): 数据库配置读取与连接串拼装
 报错却指向「host 不存在」，极难定位。
 MYSQL_* 环境变量逐项覆盖配置文件。"
 ```
+
+### 实施记录（2026-08-21）
+
+Task 1 已完成，commit `53d0182` + 修复 `e1bb9c7`。上面的代码块已更新为最终实现。原始计划里有一个 bug，代码审查时被抓出：
+
+**原写法用 `quote_plus`，是错的。** `quote_plus` 把空格编成 `+`，而 SQLAlchemy 解析连接串时对 username/password 调的是 `unquote` 而非 `unquote_plus`，`+` 会原样留下。密码 `pass word` 会以字面的 `pass+word` 去认证，报 Access denied，而配置文件看着完全正常——正是该函数 docstring 警告的那类难查故障。`@ : / #` 都没问题，唯独空格会坏。改用 `quote(x, safe="")` 后正确。
+
+同轮一并修掉的：`_DB_DEFAULTS` 缺类型标注导致 `mypy app` 报两处错（`make lint` 门禁内）；`pool_size` / `max_overflow` 用 `raw.get(key) or 默认值` 会把配置的 `0` 静默吃掉（`max_overflow=0` 表示绝不超过 pool_size，是有人会真写的值），抽出 `take()` 与 `pick()` 统一判断；`get_db_config()` docstring 原称 `MYSQL_*` 全覆盖，实际只有 5/9 个字段读环境变量，已收窄措辞。
+
+**遗留给 Task 5：** 宿主环境若存在 `MYSQL_HOST` / `MYSQL_PASSWORD`（docker compose 与官方 mysql 镜像用的正是这些变量名），本文件 6 个测试会挂 2 个——环境变量泄入了断言。Task 5 建 `conftest.py` 时要加 autouse fixture 清掉 `MYSQL_*`。
+
+**遗留给 Task 3：** `host` / `database` / `charset` 三项目前是裸插进 f-string 的。当前值来自受信任的配置文件，没有问题；若 Task 3 想更稳，可改用 `URL.create(...)` 让 SQLAlchemy 自己组装，连编码都不用管。
 
 ---
 
@@ -890,6 +941,21 @@ from sqlalchemy.pool import StaticPool
 from app.db.models import Base
 from app.db.session import get_db
 from app.main import app
+
+
+@pytest.fixture(autouse=True)
+def _clean_mysql_env(monkeypatch):
+    """清掉宿主环境的 ``MYSQL_*``,否则它们会泄进断言。
+
+    ``get_db_config()`` 让 MYSQL_HOST / MYSQL_PASSWORD 等覆盖配置文件,而这几个
+    正是 docker compose 和官方 mysql 镜像会设的变量名——开发机上存在的概率不低。
+    真发生时 tests/unit/test_db_config.py 会挂 2 个,且报错看着像配置读错了。
+    """
+    for name in (
+        "MYSQL_HOST", "MYSQL_PORT", "MYSQL_DATABASE",
+        "MYSQL_USERNAME", "MYSQL_PASSWORD",
+    ):
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture
