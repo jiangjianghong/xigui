@@ -182,6 +182,100 @@ async function bulkUnassign() {
 }
 
 // ---------------------------------------------------------------------------
+// 项目 新增 / 编辑 / 删除
+// ---------------------------------------------------------------------------
+
+let P_MODE = 'create';       // 'create' | 'edit'
+let P_ORIG_KEY = null;
+let P_DEL_KEY = null;
+
+function openProjectCreate() {
+    P_MODE = 'create';
+    P_ORIG_KEY = null;
+    document.getElementById('project-modal-title').textContent = '新建项目';
+    document.getElementById('p-key').value = '';
+    document.getElementById('p-name').value = '';
+    document.getElementById('p-desc').value = '';
+    document.getElementById('project-modal').classList.remove('hidden');
+}
+
+function openProjectEdit(key) {
+    const p = PROJECTS.find(x => x.key === key);
+    if (!p) { toast('项目不存在: ' + key, 'error'); return; }
+    P_MODE = 'edit';
+    P_ORIG_KEY = key;
+    document.getElementById('project-modal-title').textContent = `编辑项目 ${key}`;
+    document.getElementById('p-key').value = p.key;
+    document.getElementById('p-name').value = p.name;
+    document.getElementById('p-desc').value = p.description || '';
+    document.getElementById('project-modal').classList.remove('hidden');
+}
+
+function closeProjectModal() {
+    document.getElementById('project-modal').classList.add('hidden');
+}
+
+async function saveProject() {
+    const key = document.getElementById('p-key').value.trim();
+    const name = document.getElementById('p-name').value.trim();
+    const description = document.getElementById('p-desc').value.trim();
+
+    if (!key) { toast('key 不能为空', 'error'); return; }
+    if (!name) { toast('name 不能为空', 'error'); return; }
+    // 与后端 IDENT_RE 同规则，先在前端拦一道，省一次往返
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+        toast('key 只能用字母/数字/下划线,且字母或下划线开头', 'error');
+        return;
+    }
+
+    const body = { key, name, description };
+    try {
+        if (P_MODE === 'create') {
+            await api('POST', '/admin/projects', body);
+            toast('项目已创建', 'success');
+        } else {
+            await api('PUT', `/admin/projects/${encodeURIComponent(P_ORIG_KEY)}`, body);
+            toast('项目已更新', 'success');
+            // 改了 key 且当前正筛这个项目，筛选条件要跟着改
+            if (CURRENT_PROJECT === P_ORIG_KEY) CURRENT_PROJECT = key;
+        }
+        closeProjectModal();
+        await loadProjects();
+        await loadRules();
+    } catch (e) {
+        toast('保存失败: ' + e.message, 'error');
+    }
+}
+
+function openProjectDel(key) {
+    const p = PROJECTS.find(x => x.key === key);
+    if (!p) return;
+    P_DEL_KEY = key;
+    document.getElementById('p-del-name').textContent = `${p.name} (${p.key})`;
+    document.getElementById('p-del-count').textContent = p.rule_count;
+    document.getElementById('project-del-modal').classList.remove('hidden');
+}
+
+function closeProjectDel() {
+    document.getElementById('project-del-modal').classList.add('hidden');
+    P_DEL_KEY = null;
+}
+
+async function confirmProjectDel() {
+    if (!P_DEL_KEY) return;
+    try {
+        const res = await api('DELETE', `/admin/projects/${encodeURIComponent(P_DEL_KEY)}`);
+        toast(`项目已删除,${res.unassigned_rules} 条规则变为未分组`, 'success');
+        if (CURRENT_PROJECT === P_DEL_KEY) CURRENT_PROJECT = null;
+        closeProjectDel();
+        await loadProjects();
+        await loadRules();
+    } catch (e) {
+        toast('删除失败: ' + e.message, 'error');
+    }
+}
+
+// ---------------------------------------------------------------------------
 // 初始化
 // ---------------------------------------------------------------------------
 
