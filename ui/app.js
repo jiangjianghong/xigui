@@ -65,12 +65,22 @@ function switchTab(tab) {
 // ---------------------------------------------------------------------------
 
 let RULES = [];
+let RULES_TOTAL_COUNT = 0;   // 不受项目筛选影响的总数，项目栏「全部」用它
 
 async function loadRules() {
     try {
-        const data = await api('GET', '/admin/rules');
+        const q = (typeof projectQuery === 'function') ? projectQuery() : '';
+        const data = await api('GET', '/admin/rules' + q);
         RULES = data.rules || [];
+        // 「全部」的计数不能用筛选后的结果，得单独取一次
+        if (q) {
+            const all = await api('GET', '/admin/rules');
+            RULES_TOTAL_COUNT = all.count;
+        } else {
+            RULES_TOTAL_COUNT = data.count;
+        }
         renderRules();
+        if (typeof renderProjectList === 'function') renderProjectList();
     } catch (e) {
         toast('加载规则失败: ' + e.message, 'error');
     }
