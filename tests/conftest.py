@@ -4,10 +4,16 @@
 
 1. SQLite 默认**不启用**外键约束，``ON DELETE SET NULL`` 会静默失效。
    必须挂 connect 事件执行 ``PRAGMA foreign_keys=ON``。
-2. 内存库随连接销毁而消失，故用 ``StaticPool`` 让整个引擎共用一条连接。
+2. 内存库是**连接私有**的：换一条连接就是换一个空库，不存在"共享的内存库"。
+   SQLAlchemy 给内存 SQLite 的默认池是 ``SingletonThreadPool``——每线程一条
+   连接，单线程下察觉不到。但接口测试经 TestClient 调同步 endpoint 时，
+   Starlette 会把它派进工作线程池，那条新连接看到的是另一个空库，报
+   ``no such table``。故用 ``StaticPool`` 让整个引擎共用一条连接。
 """
 
 from __future__ import annotations
+
+from typing import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
@@ -57,7 +63,7 @@ def engine():
 
 
 @pytest.fixture
-def db(engine) -> Session:
+def db(engine) -> Iterator[Session]:
     maker = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     s = maker()
     try:

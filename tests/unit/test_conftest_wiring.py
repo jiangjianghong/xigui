@@ -14,6 +14,38 @@ def test_db_fixture_is_empty(db):
     assert db.query(Project).count() == 0
 
 
+def test_engine_is_shared_across_threads(engine):
+    """StaticPool 必须让另一个线程看到同一个内存库。
+
+    单线程下这条显得多余——SQLAlchemy 给内存 SQLite 的默认池是
+    SingletonThreadPool，连接本就复用，schema 不会丢。但 Task 12 起
+    接口测试会经 TestClient 调同步 endpoint，Starlette 把它派进工作
+    线程池，那时没有 StaticPool 就是 no such table。而那个报错看着像
+    建表没跑成，不像池配置问题，极难定位。所以现在就钉住。
+    """
+    import threading
+
+    from sqlalchemy import text
+
+    seen: dict = {}
+
+    def _query() -> None:
+        try:
+            with engine.connect() as conn:
+                seen["count"] = conn.execute(
+                    text("SELECT COUNT(*) FROM rules")
+                ).scalar()
+        except Exception as e:  # noqa: BLE001
+            seen["error"] = repr(e)
+
+    t = threading.Thread(target=_query)
+    t.start()
+    t.join()
+
+    assert seen.get("error") is None, f"跨线程访问失败: {seen.get('error')}"
+    assert seen["count"] == 0
+
+
 def test_foreign_keys_enabled(db):
     """SQLite 默认不启用外键，ON DELETE SET NULL 会静默失效。
 
