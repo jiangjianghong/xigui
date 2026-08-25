@@ -10,7 +10,9 @@
 - 处理:按规则配的 `prompt_template` 调 LLM 做比对
 - 输出:`{rule_id, result, reason, time, cost}`
 
-**所有规则都走 LLM**,判定边界由 `config/rules.yaml` 的 `prompt_template` 用自然语言描述,**修改后无需重启**——下一次请求自动 reload,也可手动调 `POST /admin/reload-rules`。
+**所有规则都走 LLM**,判定边界由规则的 `prompt_template` 用自然语言描述。规则存在 **MySQL** 里,通过 Web UI 或接口增删改,**改完立即生效**(每次请求实时读库,没有缓存)。`config/rules.yaml` 已降级为**导入导出的载体格式**——直接编辑它不会生效。
+
+规则可归属到**项目**,便于按项目类型分组管理;未分组也是合法状态。
 
 LLM 支持两套后端:阿里云百炼(`dashscope`)与本地 vLLM 部署的 Qwen3(`vllm`),切换只改 `config/config.yaml` 里一个字段。
 
@@ -20,15 +22,16 @@ LLM 支持两套后端:阿里云百炼(`dashscope`)与本地 vLLM 部署的 Qwen
 .
 ├── app/
 │   ├── api/             # FastAPI 路由:/compare /health /admin/*
-│   ├── core/            # 配置加载、LLM 客户端、日志
+│   ├── core/            # 配置加载、LLM 客户端、日志、导入导出编排
+│   ├── db/              # ORM 模型、引擎会话、建库建表、三个仓储
 │   ├── rules/           # 规则引擎:base + registry + LLMRule
 │   └── schemas/         # Pydantic 请求/响应模型
 ├── config/
-│   ├── config.yaml      # 主配置(app + llm + rules_config_path)
-│   └── rules.yaml       # 规则活配置(修改即生效)
+│   ├── config.yaml      # 主配置(app + llm + mysql + rules_config_path)
+│   └── rules.yaml       # 规则种子 / 导入导出模板(直接编辑不生效)
 ├── docker/              # Dockerfile + entrypoint
-├── docs/                # 接口/部署/开发文档
-├── scripts/             # start/stop/restart
+├── docs/                # 接口/部署/开发文档 + schema.sql
+├── scripts/             # start/stop/restart + import_rules.py
 ├── tests/               # unit + integration
 ├── docker-compose.yml
 └── Makefile
@@ -38,10 +41,26 @@ LLM 支持两套后端:阿里云百炼(`dashscope`)与本地 vLLM 部署的 Qwen
 
 ```bash
 cp .env.example .env
-# 编辑 config/config.yaml 填入真实 llm.api_key
+# 编辑 config/config.yaml：填入真实 llm.api_key，以及 mysql: 节的连接信息
 
 make build && make up && make logs
 ```
+
+### 数据库
+
+规则、项目、比对历史都存在 MySQL。启动时会**自动建库建表**(`CREATE DATABASE IF NOT EXISTS` + 建表),因此:
+
+- 应用账号需要 `CREATE` 权限;若不便授权,把 `docs/schema.sql` 交给 DBA 手工执行即可
+- **不做字段自动迁移**——后续表结构变更需人工执行 `ALTER`,并同步更新 `docs/schema.sql` 与 `app/db/models.py`
+
+首次启动且 `rules` 表为空时,会自动从 `config/rules.yaml` 导入一次(日志里能看到"首次启动,从 ... 导入 N 条规则")。限定"表为空"才导,是为了避免删光规则后重启又全部长回来。也可手工重跑:
+
+```bash
+uv run python scripts/import_rules.py                    # 导入 config/rules.yaml
+uv run python scripts/import_rules.py path/to/other.yaml
+```
+
+连接信息支持环境变量覆盖(`MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_DATABASE` / `MYSQL_USERNAME` / `MYSQL_PASSWORD`),生产不想把密码写进文件时用。
 
 健康检查:
 
@@ -73,12 +92,19 @@ curl -X POST http://localhost:6549/compare \
 
 ## 规则配置
 
-所有规则统一为 LLM 规则,字段:`id` / `name` / `description` / `prompt_template` / `system_prompt` / `require_field_name` 等。
-新增规则**不需改代码**:两种方式任选——
-- **Web UI**:打开 `http://localhost:6549/ui/`,在"规则管理"页点"新增规则",填好字段保存即可。每个字段下方都有用法说明。
-- **直接编辑 yaml**:复制 `config/rules.yaml` 中一条已有规则,改 id 和 prompt,下次请求自动生效;也可手动调 `POST /admin/reload-rules` 立刻刷新。
+所有规则统一为 LLM 规则,字段:`id` / `name` / `description` / `prompt_template` / `system_prompt` / `require_field_name` / `field_defs` / `project` 等。规则真源是 **MySQL**,新增规则**不需改代码**:
 
-详见 [docs/api/rules.md](docs/api/rules.md)。
+- **Web UI**(推荐):打开 `http://localhost:6549/ui/`,在"规则管理"页点"新增规则",填好字段保存即刻生效。每个字段下方都有用法说明。
+- **导入 yaml**:UI 右上角「导入」上传 yaml,按 `id` **合并 upsert**——库里有则覆盖、没有则新增,库里有而文件没有的原封不动。因此可以只导入几条规则的片段文件。任何一条校验不过则**整体回滚**,不会留下导入一半的状态。
+- **导出 yaml**:「导出」按当前项目筛选导出,可用于备份或跨环境迁移。导出→导入可完整还原(含项目归属)。
+
+> 直接编辑 `config/rules.yaml` **不再自动生效**,必须走导入。`POST /admin/reload-rules` 已降级为空操作(仅返回当前规则条数),端点保留是为了不让既有运维脚本突然 404。
+
+### 项目
+
+规则可归属到 0 或 1 个项目。项目支持增删改查、规则批量移入移出,查询规则时返回所属项目。**删项目只解除归属,绝不级联删规则**——其下规则变为"未分组"。
+
+详见 [api.md](api.md)。
 
 ## 文档导航
 
