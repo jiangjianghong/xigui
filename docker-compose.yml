@@ -3,8 +3,8 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: ai_cross_check:latest
-    container_name: ai_cross_check_app
+    image: xigui:latest
+    container_name: xigui_app
     restart: always
     environment:
       PYTHONUNBUFFERED: "1"
