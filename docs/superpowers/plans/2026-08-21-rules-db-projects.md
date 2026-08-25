@@ -6162,6 +6162,18 @@ git commit -m "docs: 同步落库后的文档
 
 ---
 
+### 前端与文档实施记录（2026-08-24 / 25）
+
+Task 18-21 commit `52074d7` / `bad2394` / `28129fd` / `c76da5a`，Task 22 commit `e07509a`。
+
+**前端无测试框架，用接线校验代替。** 计划为每个前端任务写了手工验证表，但那些需要连真 MySQL 起服务、由人点。作为交付前的静态兜底，我把 `index.html` 里所有 `onclick`/`onchange` 引用的函数名与 `app.js` + `projects.js` 的定义做了全量比对——静态 HTML 28 个引用、动态生成 HTML 7 个引用，全部有定义，无遗漏；同时确认 `--warning-deep` / `--error` 两个 CSS 变量存在。这拦不住逻辑错误，但能拦住「点了没反应」这类 ReferenceError，而它恰恰是拆分 `projects.js` 后最容易出的问题。手工验证表仍需你按表过一遍。
+
+**`config/config.yaml` 的修订已完成但故意未提交。** Task 22 Step 2 要求改它的假文档注释（第 44-45 行承诺「改 rules.yaml 自动 reload」），我已在工作区改好，同时把 `mysql:` 节缩进规范为 2 空格、`database: ""` 填为 `ai_cross_check`、补齐 charset/pool_size/max_overflow/echo 四项。
+
+但**没有 `git add` 它**：核对后确认 HEAD 里根本没有 `mysql:` 节，也就是说 `password: "1940"` 完全是工作区未提交的内容——提交它等于把真实数据库密码写进 git 历史。计划 Step 7 的 `git add config/config.yaml` 是在不知道这一点时写的。该不该把密码入库是你的决定，不是我的，故留在工作区由你处置。
+
+（顺带一个既有情况：`llm.api_key` 的真实值**早已在 HEAD 中**，是本分支之前就提交的，不在本次改动范围内。若要清理需要改写历史，建议单独处理。）
+
 ## 完成标准
 
 全部任务做完后，以下每条都要能当场验证：
