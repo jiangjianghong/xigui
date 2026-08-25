@@ -222,6 +222,15 @@
         .table-row:hover { background: rgba(232, 239, 230, 0.45); }
         .table-row td { padding: 12px 16px; font-size: 14px; color: var(--bio-dark); }
 
+        /* 规则表:7 列,且右侧还要让出 236px 给项目栏。表格是 auto layout,
+           宽度不够时浏览器会优先压缩徽章列和操作列,把「未分组」「编辑」
+           「删除」挤成换行。故除规则名列外一律禁止换行,内边距也收窄一点;
+           真的放不下时由外层 .overflow-x-auto 横向滚动,而不是把内容折断。 */
+        #rules-table th, #rules-table td { white-space: nowrap; padding-left: 12px; padding-right: 12px; }
+        /* 规则名是唯一该吸收剩余宽度的列,允许它换行 */
+        #rules-table th:nth-child(3), #rules-table td:nth-child(3) { white-space: normal; min-width: 132px; }
+        #rules-table { min-width: 820px; }
+
         /* ===== 徽章:全部走土系/绿系低饱和 ===== */
         .badge { padding: 3px 10px; border-radius: 50px; font-size: 12px; font-weight: 600; display: inline-block; }
         .badge-success { background: rgba(79, 119, 93, 0.14); color: var(--bio-med); }
@@ -239,6 +248,10 @@
             transition: background 0.18s var(--ease-soft), border-color 0.18s var(--ease-soft);
         }
         .project-item:hover { background: var(--bio-pale); }
+        /* 左侧标题带 Tailwind 的 truncate，但那在 flex 子项里要配 min-width:0 才生效；
+           右侧的计数与 hover 图标不该参与压缩，否则长项目名会把它们挤到下一行。 */
+        .project-item > span:first-child { min-width: 0; }
+        .project-item > span:last-child { flex-shrink: 0; }
         .project-item.active {
             background: var(--bio-pale); border-color: var(--bio-light); font-weight: 600;
         }
@@ -420,7 +433,7 @@
                     </div>
 
                     <div class="overflow-x-auto">
-                        <table class="w-full">
+                        <table id="rules-table" class="w-full">
                             <thead class="table-header">
                                 <tr>
                                     <th style="width: 36px;">
