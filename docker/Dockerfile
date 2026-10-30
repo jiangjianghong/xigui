@@ -43,4 +43,4 @@ RUN uv sync --no-dev
 EXPOSE 6549
 
 ENTRYPOINT ["uv", "run"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6549"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "6549", "--no-proxy-headers", "--workers", "1"]

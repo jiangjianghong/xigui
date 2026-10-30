@@ -21,18 +21,30 @@
 from __future__ import annotations
 
 import os
+import copy
+import hashlib
+import io
+import tempfile
 import threading
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
 import yaml
+from ruamel.yaml import YAML
+from filelock import FileLock
+
+from app.schemas.security import validate_document
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
 
 _cfg_cache: dict[str, Any] = {"data": None, "mtime": 0.0, "path": None}
-_lock = threading.Lock()
+_lock = threading.RLock()
+
+
+class ConfigConflictError(ValueError):
+    pass
 
 
 def _resolve_config_path(path: str | os.PathLike[str] | None = None) -> Path:
@@ -46,7 +58,9 @@ def _resolve_config_path(path: str | os.PathLike[str] | None = None) -> Path:
 
 def _read_yaml(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        data = yaml.safe_load(f) or {}
+    validate_document(data)
+    return data
 
 
 def load_config(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
@@ -59,7 +73,8 @@ def get_config() -> dict[str, Any]:
     path = _resolve_config_path()
     with _lock:
         try:
-            mtime = path.stat().st_mtime
+            stat = path.stat()
+            mtime = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
         except FileNotFoundError as e:
             raise FileNotFoundError(f"配置文件不存在: {path}") from e
         if (
@@ -79,6 +94,55 @@ def reload_config() -> dict[str, Any]:
         _cfg_cache["data"] = None
         _cfg_cache["mtime"] = 0.0
     return get_config()
+
+
+def config_snapshot() -> tuple[dict, str]:
+    with _lock:
+        raw = _resolve_config_path().read_bytes()
+        document = yaml.safe_load(raw) or {}
+        validate_document(document)
+        return document, hashlib.sha256(raw).hexdigest()
+
+
+def update_config(mutate, *, version: str | None = None) -> tuple[dict, str]:
+    """Serialize writers, validate before replacing, preserve YAML comments.
+
+    The version covers the whole file, so edits from another admin page (or a
+    completed manual edit) cannot silently overwrite one another. Single worker.
+    """
+    path = _resolve_config_path().resolve()
+    # A stable sidecar lock also serializes the separate password-reset CLI.
+    # Locking config.yaml itself would lose the lock at the atomic replacement.
+    with _lock, FileLock(str(path) + ".lock", timeout=10):
+        raw = path.read_bytes()
+        if version is not None and hashlib.sha256(raw).hexdigest() != version:
+            raise ConfigConflictError("配置已被修改，请刷新访问控制列表后重试")
+        codec = YAML()
+        codec.preserve_quotes = True
+        document = codec.load(raw.decode("utf-8")) or {}
+        mutate(document)
+        validate_document(document)
+        output = io.StringIO()
+        codec.dump(document, output)
+        encoded = output.getvalue().encode("utf-8")
+        # Pre-parse the exact bytes before touching the live file/cache.
+        data = yaml.safe_load(encoded) or {}
+        validate_document(data)
+        temp_name = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=path.parent, prefix=".config-", suffix=".tmp", delete=False) as tmp:
+                temp_name = tmp.name
+                tmp.write(encoded)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+            os.chmod(temp_name, path.stat().st_mode & 0o777)
+            os.replace(temp_name, path)
+        finally:
+            if temp_name and os.path.exists(temp_name):
+                os.unlink(temp_name)
+        stat = path.stat()
+        _cfg_cache.update(data=data, path=path, mtime=(stat.st_mtime_ns, stat.st_size, stat.st_ino))
+        return copy.deepcopy(data), hashlib.sha256(encoded).hexdigest()
 
 
 def build_extra_body(model_cfg: dict[str, Any]) -> dict[str, Any]:

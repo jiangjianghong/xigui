@@ -1,0 +1,49 @@
+/* Shared login and access-control UI; follows the existing forest-green palette. */
+.auth-ui, .access-panel { color: #2c4c3b; font: 15px/1.6 system-ui, "Microsoft YaHei", sans-serif; }
+.auth-ui *, .access-panel * { box-sizing: border-box; }
+.auth-ui h1, .auth-ui h2, .access-panel h2, .access-panel h3 { font-family: inherit; margin: 0 0 12px; line-height: 1.4; }
+.auth-ui h1, .auth-ui h2, .access-panel h2 { font-size: 24px; font-weight: 650; }
+.access-panel h3 { font-size: 18px; font-weight: 650; }
+.auth-ui p, .access-panel p { margin: 8px 0 20px; }
+.auth-page { min-height: 100dvh; margin: 0; display: grid; place-items: center; padding: 24px; background: #f5f2eb; }
+.auth-card { width: min(100%, 420px); padding: 32px; background: #fff; border-radius: 16px; }
+.auth-brand { color: #4f775d; margin-bottom: 28px !important; font-weight: 650; }
+.auth-muted, .access-muted { color: #506454; }
+.auth-ui label, .access-panel label { display: grid; gap: 6px; font-weight: 550; }
+.auth-ui form { display: grid; gap: 18px; }
+.auth-ui input, .access-panel input, .access-panel select { min-width: 0; width: 100%; font: inherit; color: #243e30; background: #fff; border: 1px solid #87978b; border-radius: 8px; padding: 10px 12px; min-height: 44px; }
+.auth-ui button, .access-panel button { font: inherit; cursor: pointer; min-height: 44px; padding: 8px 16px; border-radius: 8px; border: 1px solid #ced7ce; background: #fff; color: #2c4c3b; }
+.auth-ui .auth-primary, .access-panel .auth-primary { background: #2c4c3b; color: #fff; border-color: #2c4c3b; }
+.auth-ui button:hover, .access-panel button:hover { filter: brightness(.94); }
+.auth-ui button:disabled, .access-panel button:disabled { cursor: wait; opacity: .55; }
+.auth-ui :focus-visible, .access-panel :focus-visible { outline: 3px solid #4f775d; outline-offset: 3px; }
+.auth-error { color: #9e3028; min-height: 24px; margin: 0 !important; }
+.auth-dialog { border: 0; margin: auto; padding: 32px; width: min(440px, calc(100% - 32px)); max-height: calc(100dvh - 32px); overflow: auto; border-radius: 16px; background: #fff; }
+.auth-dialog::backdrop { background: rgb(22 40 28 / 65%); }
+.auth-dialog code { display: block; overflow-wrap: anywhere; padding: 12px; background: #eff4ed; margin: 16px 0; user-select: all; }
+.access-panel { max-width: 1050px; margin: 0 auto; }
+.access-heading { display: flex; gap: 16px; align-items: start; justify-content: space-between; }
+.access-section { background: #fff; border-radius: 16px; padding: 24px; margin-top: 24px; }
+.access-form { display: grid; grid-template-columns: 1fr 180px 1fr auto; align-items: end; gap: 12px; margin-bottom: 20px; }
+.access-ip-form { grid-template-columns: 1fr 1fr auto; }
+.access-list { display: grid; }
+.access-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; padding: 16px 0; border-top: 1px solid #e5ebe5; }
+.access-row p { margin: 4px 0 0; overflow-wrap: anywhere; font-size: 13px; }
+.access-row strong { overflow-wrap: anywhere; }
+.access-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.access-panel .access-danger { color: #9e3028; }
+.access-notice { background: #e8efe6; padding: 14px 18px; border-radius: 8px; }
+.auth-footer { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+.access-panel [hidden], .auth-ui [hidden] { display: none !important; }
+@media (max-width: 760px) {
+    .access-form, .access-ip-form { grid-template-columns: 1fr; }
+    .access-row { grid-template-columns: 1fr; gap: 8px; }
+    .access-section { padding: 20px; }
+    .auth-card { padding: 28px 24px; }
+    body > header > div { height: auto !important; padding-top: 12px; padding-bottom: 12px; flex-wrap: wrap; gap: 12px; }
+    body > header > div > div:last-child { flex-wrap: wrap; }
+    #admin-account { font-size: 13px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .auth-ui *, .access-panel * { transition: none !important; animation: none !important; }
+}

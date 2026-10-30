@@ -24,7 +24,7 @@ function toast(msg, type = 'info') {
 async function api(method, path, body) {
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
     if (body !== undefined) opts.body = JSON.stringify(body);
-    const resp = await fetch(API + path, opts);
+    const resp = await authFetch(API + path, opts);
     const text = await resp.text();
     let data = null;
     try { data = text ? JSON.parse(text) : null; } catch (e) { data = { raw: text }; }
@@ -49,11 +49,12 @@ function escape(s) {
 // ---------------------------------------------------------------------------
 
 function switchTab(tab) {
-    for (const t of ['rules', 'playground', 'history']) {
+    for (const t of ['rules', 'playground', 'history', 'access']) {
         document.getElementById(`tab-${t}`).classList.toggle('active', t === tab);
         document.getElementById(`page-${t}`).classList.toggle('hidden', t !== tab);
     }
     if (tab === 'playground') refreshPgRules();
+    if (tab === 'access') loadAccess();
     if (tab === 'history') {
         refreshHistoryFilter();
         loadHistory();

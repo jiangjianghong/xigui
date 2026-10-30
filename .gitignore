@@ -29,6 +29,7 @@ env/
 # Project runtime artifacts
 .env
 config/config.yaml
+config/*.yaml.lock
 logs/*
 !logs/.gitkeep
 data/*

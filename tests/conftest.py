@@ -16,6 +16,8 @@ from __future__ import annotations
 from typing import Iterator
 
 import pytest
+import yaml
+from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
@@ -24,6 +26,30 @@ from sqlalchemy.pool import StaticPool
 from app.db.models import Base
 from app.db.session import get_db
 from app.main import app
+
+
+@pytest.fixture(scope="session")
+def admin_hash():
+    return PasswordHasher().hash("TestAdmin123")
+
+
+@pytest.fixture(autouse=True)
+def isolated_config(tmp_path, monkeypatch, admin_hash):
+    """Never read or mutate developer credentials or contact real LLM/MySQL."""
+    from app.core import config
+    from app.core.auth import admin_auth
+    from app import main
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump({
+        "settings": {"username": "admin", "password_hash": admin_hash},
+        "llm": {"model": "test-model", "api_key": "test-only", "backend": "vllm"},
+    }), encoding="utf-8")
+    monkeypatch.setenv("CONFIG_PATH", str(path))
+    monkeypatch.setattr(config, "_cfg_cache", {"data": None, "mtime": 0.0, "path": None})
+    monkeypatch.setattr(main, "setup_logging", lambda: None)
+    admin_auth.reset()
+    yield path
+    admin_auth.reset()
 
 
 @pytest.fixture(autouse=True)
@@ -73,7 +99,7 @@ def db(engine) -> Iterator[Session]:
 
 
 @pytest.fixture
-def client(db):
+def anonymous_client(db):
     """TestClient 与 ``db`` 夹具共用同一会话。
 
     共用是刻意的：测试里用 ``db`` 直接塞数据，再用 ``client`` 调接口断言，
@@ -90,3 +116,12 @@ def client(db):
         # 放 finally 且用 pop：lifespan 现在会做建库/首次导入，yield 之前抛异常
         # 时旧写法的 clear() 会被跳过，把覆盖漏给后续用例。
         app.dependency_overrides.pop(get_db, None)
+
+
+@pytest.fixture
+def client(anonymous_client):
+    """Existing business tests exercise the real admin session, never a bypass."""
+    anonymous_client.headers["X-Requested-With"] = "XMLHttpRequest"
+    response = anonymous_client.post("/auth/login", json={"username": "admin", "password": "TestAdmin123"})
+    assert response.status_code == 200
+    return anonymous_client

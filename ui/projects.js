@@ -280,8 +280,17 @@ async function confirmProjectDel() {
 // ---------------------------------------------------------------------------
 
 /** 导出与左栏联动:当前筛的是什么就导什么,不额外追问。 */
-function exportRules() {
-    window.location.href = '/admin/export' + projectQuery();
+async function exportRules() {
+    try {
+        const response = await authFetch('/admin/export' + projectQuery());
+        if (!response.ok) throw new Error(response.status === 401 ? '请重新登录后导出' : '导出失败');
+        const url = URL.createObjectURL(await response.blob());
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'rules.yaml';
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) { toast(err.message, 'error'); }
 }
 
 function triggerImport() {
@@ -300,7 +309,7 @@ async function doImport(input) {
     try {
         // 不能走 api()——它会设 Content-Type: application/json，
         // multipart 的 boundary 必须交给浏览器自己生成
-        const resp = await fetch('/admin/import', { method: 'POST', body: fd });
+        const resp = await authFetch('/admin/import', { method: 'POST', body: fd });
         const text = await resp.text();
         let data = null;
         try { data = text ? JSON.parse(text) : null; } catch (e) { data = { raw: text }; }

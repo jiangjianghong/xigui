@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理员登录 · 析规</title>
+    <link rel="stylesheet" href="/ui/auth.css">
+    <script src="/ui/auth.js" defer></script>
+</head>
+<body class="auth-page auth-ui" data-login-page>
+    <main class="auth-card">
+        <p class="auth-brand">析规 · 交叉校验</p>
+        <h1>管理员登录</h1>
+        <p class="auth-muted">登录后管理规则、查看比对记录与配置接口访问。</p>
+        <form id="login-form">
+            <label>管理员账号<input name="username" autocomplete="username" value="admin" maxlength="100" required autofocus></label>
+            <label>密码（6–12 个字符）<input name="password" type="password" autocomplete="current-password" minlength="6" maxlength="12" required></label>
+            <p class="auth-error" role="alert" id="login-error"></p>
+            <button class="auth-primary" type="submit">登录后台</button>
+        </form>
+        <noscript>请启用 JavaScript 后登录。</noscript>
+    </main>
+</body>
+</html>

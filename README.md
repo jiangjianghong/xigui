@@ -41,7 +41,10 @@ LLM 支持两套后端:阿里云百炼(`dashscope`)与本地 vLLM 部署的 Qwen
 
 ```bash
 cp .env.example .env
+cp config/config.example.yaml config/config.yaml  # 首次部署；升级时保留已有配置
 # 编辑 config/config.yaml：填入真实 llm.api_key，以及 mysql: 节的连接信息
+uv sync
+uv run python scripts/set_admin_password.py  # 初始化管理员；没有默认密码
 
 make build && make up && make logs
 ```
@@ -78,6 +81,7 @@ http://localhost:6549/        # 自动跳转 /ui/
 
 ```bash
 curl -X POST http://localhost:6549/compare \
+  -H "Authorization: Bearer $XIGUI_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"rule_id":"R001",
        "field_a":{"name":"项目代码","value":"  2024-001 "},
@@ -89,6 +93,14 @@ curl -X POST http://localhost:6549/compare \
 ```
 
 更多示例见 [docs/api/README.md](docs/api/README.md)。
+
+## 鉴权
+
+管理员先登录后台；在「接口访问控制」为程序创建独立 API Key 或配置 IP 白名单。程序只可比对、读取规则/项目/历史；所有修改、删除、导入导出和文档页面要求管理员登录。API Key 与白名单是二选一，所有调用方共享业务数据。
+
+账号使用 Argon2id 哈希，默认固定 30 分钟会话。首次初始化或重置密码执行 `uv run python scripts/set_admin_password.py`。部署使用单 worker，手动 Uvicorn 启动加 `--no-proxy-headers`。
+
+完整权限、代理与配置说明见 [鉴权文档](docs/authentication.md)。
 
 ## 规则配置
 

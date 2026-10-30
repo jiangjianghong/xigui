@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
 from app.db import repo_rules
@@ -12,12 +12,13 @@ router = APIRouter(tags=["health"])
 
 
 @router.get("/health", summary="健康检查")
-def health(db: Session = Depends(get_db)) -> dict:
-    rules = repo_rules.list_rules(db)
-    return {
+def health(request: Request, db: Session = Depends(get_db)) -> dict:
+    result = {
         "status": "ok",
         "service": "ai_cross_check",
         "version": "0.1.0",
-        "rules_loaded": len(rules),
-        "rule_ids": [r.rule_id for r in rules],
     }
+    if request.state.auth_identity == "admin":
+        rules = repo_rules.list_rules(db)
+        result.update(rules_loaded=len(rules), rule_ids=[r.rule_id for r in rules])
+    return result

@@ -5,7 +5,7 @@
     python -m app.main
 
     # Docker / 生产
-    uvicorn app.main:app --host 0.0.0.0 --port 6549
+    uvicorn app.main:app --host 0.0.0.0 --port 6549 --workers 1 --no-proxy-headers
 """
 
 from __future__ import annotations
@@ -15,7 +15,9 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.exc import OperationalError
 
@@ -24,25 +26,32 @@ from app.api import (
     admin_import_export,
     admin_projects,
     admin_rules,
+    auth,
     compare,
     health,
     history,
 )
 from app.core.config import PROJECT_ROOT, get_config
 from app.core.logging import setup_logging
+from app.core.auth import AuthMiddleware, admin_auth
+from app.core.access_control import initialize_auth
+from app.schemas.security import PASSWORD_LENGTH_MESSAGE
 
-# 必须最先调用，否则后续模块的 logger 输出可能用默认配置
-setup_logging()
+# Configure handlers during lifespan, after test/deployment configuration is selected.
+# Importing the application must not read deployment credentials.
 log = logging.getLogger("aicheck.boot")
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    setup_logging()
     from app.core.startup import seed_rules_if_empty
     from app.db import repo_rules
     from app.db.bootstrap import bootstrap_database
     from app.db.session import get_db, get_sessionmaker
 
+    initialize_auth()
+    admin_auth.reset()
     cfg = get_config()
     llm_cfg = cfg.get("llm", {})
 
@@ -83,6 +92,19 @@ app = FastAPI(
 )
 
 
+@app.exception_handler(RequestValidationError)
+async def _validation_error(request: Request, exc: RequestValidationError):
+    if request.url.path.rstrip("/") == "/auth/login" and any(
+        error["loc"] == ("body", "password")
+        and error["type"] in {"string_too_short", "string_too_long"}
+        for error in exc.errors()
+    ):
+        return JSONResponse({"detail": PASSWORD_LENGTH_MESSAGE}, status_code=422)
+    if request.url.path.startswith(("/auth/", "/admin/access-control")):
+        return JSONResponse({"detail": "请求格式不正确，请检查字段和长度"}, status_code=422)
+    return await request_validation_exception_handler(request, exc)
+
+
 @app.exception_handler(OperationalError)
 def _db_unavailable(_request: Request, exc: OperationalError) -> JSONResponse:
     """数据库不可用是依赖故障,返 503 而非 500。
@@ -98,6 +120,8 @@ def _db_unavailable(_request: Request, exc: OperationalError) -> JSONResponse:
 
 
 app.include_router(health.router)
+app.add_middleware(AuthMiddleware)
+app.include_router(auth.router)
 app.include_router(compare.router)
 app.include_router(admin.router, prefix="/admin")
 app.include_router(admin_rules.router, prefix="/admin")
@@ -112,6 +136,16 @@ app.include_router(history.router, prefix="/admin")
 
 _UI_DIR = PROJECT_ROOT / "ui"
 if _UI_DIR.is_dir():
+    # Register before /ui's static mount so the public URL has no file suffix.
+    @app.api_route("/ui/login", methods=["GET", "HEAD"], include_in_schema=False)
+    def _login_page() -> FileResponse:
+        return FileResponse(_UI_DIR / "login.html", media_type="text/html")
+
+    @app.api_route("/ui/login/", methods=["GET", "HEAD"], include_in_schema=False)
+    @app.api_route("/ui/login.html", methods=["GET", "HEAD"], include_in_schema=False)
+    def _legacy_login_redirect() -> RedirectResponse:
+        return RedirectResponse("/ui/login", status_code=308)
+
     app.mount("/ui", StaticFiles(directory=str(_UI_DIR), html=True), name="ui")
 
     @app.get("/", include_in_schema=False)
@@ -132,6 +166,8 @@ def main() -> None:
         log_level=str(app_cfg.get("log_level", "info")).lower(),
         # 我们已经接管了 logging，禁用 uvicorn 默认日志配置避免重复
         log_config=None,
+        proxy_headers=False,
+        workers=1,
     )
 
 

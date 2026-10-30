@@ -7,6 +7,8 @@
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌿</text></svg>">
     <script src="tailwind.js"></script>
     <link href="remixicon.css" rel="stylesheet">
+    <link href="auth.css" rel="stylesheet">
+    <script src="auth.js"></script>
     <script>
         tailwind.config = {
             theme: {
@@ -384,6 +386,9 @@
                 <button id="tab-history" class="tab" onclick="switchTab('history')">
                     <i class="ri-history-line mr-1"></i> 请求历史
                 </button>
+                <button id="tab-access" class="tab" onclick="switchTab('access')">接口访问控制</button>
+                <span id="admin-account" class="text-sm"></span>
+                <button class="btn-outline" onclick="logoutAdmin()">退出</button>
                 <button class="btn-outline" onclick="reloadAll()" title="重新拉取数据">
                     <i class="ri-refresh-line"></i>
                 </button>
@@ -569,7 +574,37 @@
                 </div>
             </div>
         </section>
+        <section id="page-access" class="hidden access-panel">
+            <div class="access-heading"><div><h2>接口访问控制</h2><p class="access-muted">为调用程序分发密钥，或允许可信地址免密访问业务接口。</p></div>
+                <button onclick="loadAccess()">刷新列表</button></div>
+            <p class="access-notice">有效 Key 或白名单任一满足即可访问。禁用 Key 后，命中白名单的程序仍可访问。所有调用方共享业务数据。</p>
+            <p id="access-error" class="auth-error" role="alert"></p>
+            <section class="access-section" aria-labelledby="keys-title">
+                <h3 id="keys-title">API Key</h3><p class="access-muted">完整密钥仅展示一次。调用时使用 Authorization: Bearer &lt;Key&gt;。</p>
+                <form id="key-create" class="access-form">
+                    <label>调用方名称<input id="key-name" placeholder="例如：财务系统" maxlength="100" required></label>
+                    <label>有效期<select id="key-validity" class="native-select"><option value="permanent">永久有效</option><option value="custom">指定时间</option></select></label>
+                    <label>过期时间（本地时间）<input id="key-expires" type="datetime-local" disabled></label>
+                    <button type="submit" class="auth-primary">创建密钥</button>
+                </form>
+                <div id="access-keys" class="access-list" aria-live="polite"><p>正在加载密钥…</p></div>
+            </section>
+            <section class="access-section" aria-labelledby="ips-title">
+                <h3 id="ips-title">IP 白名单</h3><p class="access-muted">支持 IPv4、IPv6 和 CIDR 网段，允许来源地址的所有端口。同一 NAT 出口下的程序无法区分。</p>
+                <form id="ip-create" class="access-form access-ip-form">
+                    <label>名称<input id="ip-name" placeholder="例如：内网调用服务器" maxlength="100" required></label>
+                    <label>地址或网段<input id="ip-network" placeholder="192.168.1.10 或 192.168.1.0/24" maxlength="100" required></label>
+                    <button type="submit">添加白名单</button>
+                </form>
+                <div id="access-ips" class="access-list" aria-live="polite"><p>正在加载白名单…</p></div>
+            </section>
+        </section>
     </main>
+    <dialog id="access-secret" class="auth-dialog auth-ui" aria-labelledby="secret-title">
+        <h2 id="secret-title">请保存完整密钥</h2>
+        <p>关闭后无法再次查看；遗失后需要重新生成。</p><code></code><p role="status"></p>
+        <div class="auth-footer"><button data-copy class="auth-primary">复制密钥</button><button data-close>已保存，关闭</button></div>
+    </dialog>
 
     <!-- ===== 编辑/新增 Modal ===== -->
     <div id="rule-modal" class="modal-overlay hidden">
@@ -736,6 +771,7 @@
 
     <script src="app.js"></script>
     <script src="projects.js"></script>
+    <script src="access.js"></script>
     <script src="bio-select.js"></script>
 </body>
 </html>

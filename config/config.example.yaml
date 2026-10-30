@@ -1,0 +1,31 @@
+# Copy to config/config.yaml and configure the real services.
+app:
+  host: 0.0.0.0
+  port: 6549
+  log_level: info
+llm:
+  backend: vllm
+  api_base: http://127.0.0.1:8000/v1
+  api_key: replace-me
+  model: your-model
+  enable_thinking: false
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  database: ai_cross_check
+  username: root
+  password: ''
+rules_config_path: config/rules.yaml
+
+settings:
+  username: admin
+  # Run: uv run python scripts/set_admin_password.py
+  # No shared/default password. The server refuses to start until initialized.
+  password_hash: ''
+  session_minutes: 30
+  secure_cookie: false  # Set true when serving the browser over HTTPS.
+
+access_control:
+  api_keys: []          # Created in the admin UI; only SHA-256 hashes are stored.
+  ip_allowlist: []      # Admin UI accepts IPv4/IPv6 addresses and CIDR ranges.
+  trusted_proxies: []   # Example: ['127.0.0.1/32', '::1/128']; trust only your actual proxies.
