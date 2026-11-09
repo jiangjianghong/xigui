@@ -1,4 +1,4 @@
-"""Single-worker admin sessions and a default-deny ASGI authorization boundary."""
+"""Single-worker sessions and equivalent session, API Key and IP authorization."""
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from starlette.datastructures import MutableHeaders
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
-from starlette.routing import Match
 
 from app.core.config import get_config
 from app.schemas.security import (
@@ -27,15 +26,6 @@ from app.schemas.security import (
 
 COOKIE_NAME = "xigui_session"  # Do not collide with the sibling xijuan service on the same host.
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-BUSINESS_ROUTES = {
-    ("POST", "/compare"),
-    ("GET", "/admin/rules"),
-    ("GET", "/admin/rules/{rule_id}"),
-    ("GET", "/admin/projects"),
-    ("GET", "/admin/projects/{key}"),
-    ("GET", "/admin/history"),
-    ("GET", "/admin/history/{record_id}"),
-}
 PUBLIC_FILES = {"/ui/login", "/ui/login.html", "/ui/auth.js", "/ui/auth.css"}
 
 
@@ -213,19 +203,6 @@ def api_key_identity(header: str | None, keys) -> str | None:
     return None
 
 
-def is_business_route(scope) -> bool:
-    # Match the same registered route Starlette will dispatch. A future static
-    # route such as /admin/rules/export must not inherit the {rule_id} grant.
-    for route in scope["app"].routes:
-        match, _ = route.matches(scope)
-        if match == Match.FULL:
-            return (scope["method"], getattr(route, "path", None)) in BUSINESS_ROUTES
-    # Starlette may redirect a trailing slash to its canonical spelling.
-    if scope["path"].endswith("/"):
-        return is_business_route({**scope, "path": scope["path"].rstrip("/")})
-    return False
-
-
 class AuthMiddleware:
     def __init__(self, app):
         self.app = app
@@ -277,24 +254,24 @@ class AuthMiddleware:
             public = True
         state = scope.setdefault("state", {})
         state["client_ip"] = client_ip(request, trusted)
-        state["auth_identity"] = "admin" if session else None
-        if not public:
+        key_id = api_key_identity(request.headers.get("authorization"), cfg.access_control.api_keys)
+        allowed_ip = in_networks(state["client_ip"], (item.network for item in cfg.access_control.ip_allowlist if item.enabled))
+        # Independent credentials authorize every route, even when a browser
+        # also carries a valid or expired session cookie. XHR is a CSRF guard
+        # for cookie-only requests, not an additional credential for programs.
+        state["auth_identity"] = (f"key:{key_id}" if key_id else
+                                  f"ip:{state['client_ip']}" if allowed_ip else
+                                  "admin" if session else None)
+        if not public and not key_id and not allowed_ip:
             if session:
                 if method not in SAFE_METHODS and request.headers.get("x-requested-with") != "XMLHttpRequest":
                     await reject(403, "请求缺少安全请求头，请刷新页面")
                     return
+            elif canonical == "/" or canonical == "/ui" or path.startswith("/ui/"):
+                await RedirectResponse("/ui/login", status_code=303)(scope, receive, secured_send)
+                return
             else:
-                key_id = api_key_identity(request.headers.get("authorization"), cfg.access_control.api_keys)
-                allowed_ip = in_networks(state["client_ip"], (item.network for item in cfg.access_control.ip_allowlist if item.enabled))
-                business = is_business_route(scope)
-                if business and (key_id or allowed_ip):
-                    state["auth_identity"] = f"key:{key_id}" if key_id else f"ip:{state['client_ip']}"
-                elif canonical == "/" or canonical == "/ui" or path.startswith("/ui/"):
-                    await RedirectResponse("/ui/login", status_code=303)(scope, receive, secured_send)
-                    return
-                else:
-                    status = 403 if key_id or allowed_ip else 401
-                    await reject(status, "此操作需要管理员登录" if status == 403 else "请登录或提供有效 API Key",
-                                 headers={"WWW-Authenticate": "Bearer"} if status == 401 else None)
-                    return
+                await reject(401, "请登录、提供有效 API Key 或使用白名单 IP",
+                             headers={"WWW-Authenticate": "Bearer"})
+                return
         await self.app(scope, receive, secured_send)

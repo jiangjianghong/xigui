@@ -8,8 +8,8 @@
 - 基础路径：`/`（无前缀）
 - 编码：UTF-8
 - 数据格式：JSON
-- 鉴权：管理员会话、程序 API Key 或 IP 白名单。程序请求携带 `Authorization: Bearer xj_...`；只有管理员会话可访问管理操作和接口文档。完整权限及登录/密钥管理 API 见 [鉴权文档](docs/authentication.md)。
-- 所有管理员修改请求与登录请求需带 `X-Requested-With: XMLHttpRequest`，不开放跨域 CORS。
+- 鉴权：管理员会话、有效程序 API Key 或命中 IP 白名单均可访问全部接口和文档。程序请求携带 `Authorization: Bearer xj_...`。完整权限及登录/密钥管理 API 见 [鉴权文档](docs/authentication.md)。
+- 使用管理员 Cookie 的修改请求与登录请求需带 `X-Requested-With: XMLHttpRequest`；Key/IP 调用不依赖此请求头。不开放跨域 CORS。
 
 ## 接口列表
 
@@ -17,7 +17,7 @@
 
 - 方法：`GET`
 - 路径：`/health`
-- 描述：公开返回服务运行状态、名称和版本；管理员登录时额外返回规则数量和 ID。下面是管理员响应示例。
+- 描述：公开返回服务运行状态、名称和版本；通过管理员会话、有效 Key 或白名单鉴权时，额外返回规则数量和 ID。
 
 请求参数：无
 

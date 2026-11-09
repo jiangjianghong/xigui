@@ -9,10 +9,16 @@
 
     function rememberSession(session) {
         clearTimeout(expiryTimer);
-        if (!session.authenticated) return;
-        currentUser = session.username;
+        if (!session.authenticated && !session.authorized) return;
+        if (session.username) currentUser = session.username;
+        const identityLabel = session.username || session.identity || currentUser;
         const label = document.getElementById('admin-account');
-        if (label) label.textContent = session.username;
+        if (label) label.textContent = identityLabel;
+        const logout = document.getElementById('logout-admin');
+        if (logout) logout.hidden = !session.authenticated;
+        // API Key and IP authorization have no browser-session deadline.
+        // Periodic checks still notice expired keys and removed allowlist entries.
+        if (!session.authenticated || !session.expires_at) return;
         const delay = Math.max(0, Date.parse(session.expires_at) - Date.now());
         // Always ask the server at the deadline: browser clocks may differ.
         expiryTimer = setTimeout(checkSession, Math.max(1000, delay));
@@ -80,8 +86,7 @@
         headers.set('X-Requested-With', 'XMLHttpRequest');
         const response = await fetch(url, { ...options, headers, credentials: 'same-origin' });
         if (response.status === 401) requireLogin();
-        // A whitelisted browser still gets 403 on admin writes after its cookie
-        // expires; check the session so re-login is immediate in that case too.
+        // Recheck authentication after a rejected request without replaying it.
         if (response.status === 403) await checkSession();
         return response; // Never replay a mutation automatically.
     };
@@ -93,7 +98,7 @@
             const response = await fetch('/auth/session', { credentials: 'same-origin', cache: 'no-store' });
             if (!response.ok) return;
             const session = await response.json();
-            if (session.authenticated) {
+            if (session.authorized) {
                 if (isLoginPage()) window.location.replace('/ui/');
                 else rememberSession(session);
             } else requireLogin();

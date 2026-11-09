@@ -388,7 +388,7 @@
                 </button>
                 <button id="tab-access" class="tab" onclick="switchTab('access')">接口访问控制</button>
                 <span id="admin-account" class="text-sm"></span>
-                <button class="btn-outline" onclick="logoutAdmin()">退出</button>
+                <button id="logout-admin" class="btn-outline" onclick="logoutAdmin()">退出</button>
                 <button class="btn-outline" onclick="reloadAll()" title="重新拉取数据">
                     <i class="ri-refresh-line"></i>
                 </button>
@@ -575,9 +575,9 @@
             </div>
         </section>
         <section id="page-access" class="hidden access-panel">
-            <div class="access-heading"><div><h2>接口访问控制</h2><p class="access-muted">为调用程序分发密钥，或允许可信地址免密访问业务接口。</p></div>
+            <div class="access-heading"><div><h2>接口访问控制</h2><p class="access-muted">为调用程序分发密钥，或允许可信地址免密访问全部接口。</p></div>
                 <button onclick="loadAccess()">刷新列表</button></div>
-            <p class="access-notice">有效 Key 或白名单任一满足即可访问。禁用 Key 后，命中白名单的程序仍可访问。所有调用方共享业务数据。</p>
+            <p class="access-notice">登录会话、有效 Key 和白名单权限相同，均可调用和管理全部接口。禁用 Key 后，命中白名单的程序仍可访问。所有调用方共享业务数据。</p>
             <p id="access-error" class="auth-error" role="alert"></p>
             <section class="access-section" aria-labelledby="keys-title">
                 <h3 id="keys-title">API Key</h3><p class="access-muted">完整密钥仅展示一次。调用时使用 Authorization: Bearer &lt;Key&gt;。</p>

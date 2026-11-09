@@ -96,7 +96,7 @@ curl -X POST http://localhost:6549/compare \
 
 ## 鉴权
 
-管理员先登录后台；在「接口访问控制」为程序创建独立 API Key 或配置 IP 白名单。程序只可比对、读取规则/项目/历史；所有修改、删除、导入导出和文档页面要求管理员登录。API Key 与白名单是二选一，所有调用方共享业务数据。
+管理员先登录后台；在「接口访问控制」为程序创建 API Key 或配置 IP 白名单。登录会话、有效 Key 和命中白名单的 IP 权限相同，均可调用、查询和管理全部接口及访问文档。所有调用方共享数据。
 
 账号使用 Argon2id 哈希，默认固定 30 分钟会话。首次初始化或重置密码执行 `uv run python scripts/set_admin_password.py`。部署使用单 worker，手动 Uvicorn 启动加 `--no-proxy-headers`。
 

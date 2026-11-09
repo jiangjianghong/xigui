@@ -43,8 +43,14 @@ def login(body: LoginRequest, request: Request, response: Response):
 @router.get("/auth/session")
 def session(request: Request):
     info = admin_auth.validate(request.cookies.get(COOKIE_NAME))
-    return ({"authenticated": True, "username": info["username"], "expires_at": info["expires_at"]}
-            if info else {"authenticated": False})
+    if info:
+        return {"authenticated": True, "authorized": True, "username": info["username"],
+                "identity": "admin", "expires_at": info["expires_at"]}
+    identity = request.state.auth_identity
+    if identity and identity != "admin":
+        name = "API Key" if identity.startswith("key:") else "IP 白名单"
+        return {"authenticated": False, "authorized": True, "identity": name}
+    return {"authenticated": False, "authorized": False}
 
 
 @router.post("/auth/logout")

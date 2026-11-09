@@ -45,7 +45,7 @@ def test_anonymous_denied_before_business(anonymous_client, method, path):
 
 def test_public_surface_is_minimal(anonymous_client):
     assert anonymous_client.get("/health").json() == {"status": "ok", "service": "ai_cross_check", "version": "0.1.0"}
-    assert anonymous_client.get("/auth/session").json() == {"authenticated": False}
+    assert anonymous_client.get("/auth/session").json() == {"authenticated": False, "authorized": False}
     for path in ["/", "/ui/", "/ui/index.html", "/ui/app.js", "/ui/access.js"]:
         response = anonymous_client.get(path, follow_redirects=False)
         assert response.status_code == 303
@@ -87,12 +87,13 @@ def test_login_cookie_logout_and_fixed_expiry(anonymous_client, monkeypatch):
     assert "httponly" in cookie and "samesite=strict" in cookie and "max-age=1800" in cookie
     assert auth.COOKIE_NAME in cookie
     expires = response.json()["expires_at"]
+    assert anonymous_client.get("/auth/session").json()["authorized"] is True
     clock[0] += 1700
     assert anonymous_client.get("/admin/rules").status_code == 200
     assert anonymous_client.get("/auth/session").json()["expires_at"] == expires
     clock[0] += 101
     assert anonymous_client.get("/admin/rules").status_code == 401
-    assert anonymous_client.get("/auth/session").json()["authenticated"] is False
+    assert anonymous_client.get("/auth/session").json() == {"authenticated": False, "authorized": False}
     anonymous_client.post("/auth/login", json=LOGIN, headers=XHR)
     token = anonymous_client.cookies.get(auth.COOKIE_NAME)
     assert anonymous_client.post("/auth/logout", headers=XHR).status_code == 200
@@ -169,17 +170,80 @@ def test_key_hash_only_lifecycle_and_immediate_revocation(client, isolated_confi
         program.close()
 
 
-@pytest.mark.parametrize("method,path", [
-    ("POST", "/admin/rules"), ("PUT", "/admin/rules/R1"), ("DELETE", "/admin/rules/R1"),
-    ("POST", "/admin/projects"), ("DELETE", "/admin/projects/demo"), ("DELETE", "/admin/history"),
-    ("GET", "/admin/export"), ("POST", "/admin/import"), ("POST", "/admin/reload-config"),
-    ("GET", "/admin/access-control"), ("POST", "/admin/access-control/api_keys"),
-    ("GET", "/docs"), ("GET", "/openapi.json"), ("GET", "/future-api"),
+@pytest.fixture(params=["key", "ip"])
+def program(client, request):
+    if request.param == "key":
+        key = create(client)["key"]
+        caller = TestClient(app, headers={"Authorization": f"Bearer {key}"})
+    else:
+        create(client, "ip_allowlist", network="192.0.2.4")
+        caller = TestClient(app, client=("192.0.2.4", 40000))
+    try:
+        yield caller
+    finally:
+        caller.close()
+
+
+@pytest.mark.parametrize("method,path,expected", [
+    ("POST", "/admin/rules", 422), ("PUT", "/admin/rules/R1", 422), ("DELETE", "/admin/rules/R1", 404),
+    ("POST", "/admin/projects", 422), ("DELETE", "/admin/projects/demo", 404),
+    ("DELETE", "/admin/history", 200), ("GET", "/admin/export", 200), ("POST", "/admin/import", 422),
+    ("POST", "/admin/reload-config", 200), ("GET", "/admin/access-control", 200),
+    ("POST", "/admin/access-control/api_keys", 422), ("GET", "/docs", 200), ("GET", "/redoc", 200),
+    ("GET", "/openapi.json", 200), ("GET", "/future-api", 404), ("GET", "/ui/", 200), ("GET", "/ui/app.js", 200),
 ])
-def test_key_cannot_administer(client, method, path):
-    key = create(client)["key"]
-    with TestClient(app, headers={"Authorization": f"Bearer {key}"}) as program:
-        assert program.request(method, path).status_code == 403
+def test_program_has_full_route_access(program, method, path, expected):
+    response = program.request(method, path)
+    assert response.status_code == expected, response.text
+
+
+def test_program_can_mutate_rules_projects_and_access_control(program):
+    project = {"key": "demo", "name": "测试项目"}
+    assert program.post("/admin/projects", json=project).status_code == 201
+    assert program.put("/admin/projects/demo", json={**project, "name": "已修改"}).status_code == 200
+    rule = {"id": "R1", "prompt_template": "{field_a} {field_b}", "project": "demo"}
+    assert program.post("/admin/rules", json=rule).status_code == 201
+    assert program.put("/admin/rules/R1", json={**rule, "name": "已修改"}).status_code == 200
+    assert program.post("/admin/rules/unassign", json={"rule_ids": ["R1"]}).status_code == 200
+    assert program.post("/admin/projects/demo/rules", json={"rule_ids": ["R1"]}).status_code == 200
+    exported = program.get("/admin/export")
+    assert exported.status_code == 200
+    assert program.post("/admin/import", files={"file": ("rules.yaml", exported.content, "application/x-yaml")}).status_code == 200
+    assert program.delete("/admin/rules/R1").status_code == 200
+    assert program.delete("/admin/projects/demo").status_code == 200
+    data = create(program)
+    rotated = change(program, data, "rotate")
+    assert rotated.status_code == 200
+    program.headers["Authorization"] = "Bearer " + rotated.json()["key"]
+    data = create(program, "ip_allowlist", network="198.51.100.8")
+    assert change(program, data, "update", "ip_allowlist", enabled=False).status_code == 200
+
+
+def test_program_session_status_and_health_include_full_access(program):
+    status = program.get("/auth/session").json()
+    assert status["authenticated"] is False
+    assert status["authorized"] is True
+    assert status["identity"] in {"API Key", "IP 白名单"}
+    assert "expires_at" not in status
+    assert program.get("/health").json() == {
+        "status": "ok", "service": "ai_cross_check", "version": "0.1.0",
+        "rules_loaded": 0, "rule_ids": [],
+    }
+
+
+def test_program_authorization_survives_session_expiry(program):
+    assert program.post("/auth/login", json=LOGIN, headers=XHR).status_code == 200
+    token = program.cookies.get(auth.COOKIE_NAME)
+    assert program.delete("/admin/history").status_code == 200
+    auth.admin_auth.reset()
+    assert auth.admin_auth.validate(token) is None
+    assert program.get("/auth/session").json()["authorized"] is True
+    assert program.delete("/admin/history").status_code == 200
+
+
+def test_program_cannot_make_cross_site_requests(program):
+    assert program.delete("/admin/history", headers={"Origin": "https://evil.example"}).status_code == 403
+    assert program.delete("/admin/history", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
 
 
 def test_expired_key_denied(client):
@@ -192,13 +256,15 @@ def test_expired_key_denied(client):
 
 @pytest.mark.parametrize("network,peer", [("192.0.2.4", "192.0.2.4"), ("192.0.2.0/24", "192.0.2.8"),
                                          ("2001:db8::/32", "2001:db8::1"), ("192.0.2.4", "::ffff:192.0.2.4")])
-def test_whitelisted_ip_business_only_and_disable(client, network, peer):
+def test_whitelisted_ip_full_access_and_disable(client, network, peer):
     data = create(client, "ip_allowlist", network=network)
     program = TestClient(app, client=(peer, 40000))
     assert program.get("/admin/projects").status_code == 200
-    assert program.delete("/admin/history").status_code == 403
+    assert program.delete("/admin/history").status_code == 200
     assert change(client, data, "update", "ip_allowlist", enabled=False).status_code == 200
     assert program.get("/admin/projects").status_code == 401
+    assert program.delete("/admin/history").status_code == 401
+    assert program.get("/auth/session").json() == {"authenticated": False, "authorized": False}
     program.close()
 
 
@@ -209,6 +275,7 @@ def test_whitelist_is_an_alternative_to_disabled_key(client):
     create(client, "ip_allowlist", network="192.0.2.4")
     program = TestClient(app, client=("192.0.2.4", 1111), headers={"Authorization": f"Bearer {key}"})
     assert program.get("/admin/rules").status_code == 200
+    assert program.delete("/admin/history").status_code == 200
     program.close()
 
 
@@ -274,16 +341,27 @@ def test_invalid_hot_reload_fails_closed(client, isolated_config):
     assert "invalid" not in response.text
 
 
-def test_future_static_route_does_not_inherit_parameter_grant(client):
-    key = create(client)["key"]
+@pytest.mark.parametrize("credential", ["key", "ip"])
+def test_future_routes_accept_every_authorized_identity(client, credential):
+    if credential == "key":
+        headers, peer = {"Authorization": f"Bearer {create(client)['key']}"}, "127.0.0.1"
+    else:
+        create(client, "ip_allowlist", network="192.0.2.4")
+        headers, peer = {}, "192.0.2.4"
     future = FastAPI()
     future.add_middleware(auth.AuthMiddleware)
     @future.get("/admin/rules/new-admin-operation")
     def added_later():
         return {"secret": True}
-    test = TestClient(future, headers={"Authorization": f"Bearer {key}"})
-    assert test.get("/admin/rules/new-admin-operation").status_code == 403
-    test.close()
+    @future.post("/future-api")
+    def added_later_mutation():
+        return {"status": "ok"}
+    with TestClient(future, headers=headers, client=(peer, 40000)) as test:
+        assert test.get("/admin/rules/new-admin-operation").json() == {"secret": True}
+        assert test.post("/future-api").json() == {"status": "ok"}
+    with TestClient(future) as anonymous:
+        assert anonymous.get("/admin/rules/new-admin-operation").status_code == 401
+        assert anonymous.post("/future-api").status_code == 401
 
 
 def test_config_lock_timeout_is_retryable(client, monkeypatch):

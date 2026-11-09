@@ -13,12 +13,12 @@ router = APIRouter(tags=["health"])
 
 @router.get("/health", summary="健康检查")
 def health(request: Request, db: Session = Depends(get_db)) -> dict:
-    result = {
+    result: dict[str, object] = {
         "status": "ok",
         "service": "ai_cross_check",
         "version": "0.1.0",
     }
-    if request.state.auth_identity == "admin":
+    if request.state.auth_identity:
         rules = repo_rules.list_rules(db)
         result.update(rules_loaded=len(rules), rule_ids=[r.rule_id for r in rules])
     return result

@@ -1,6 +1,6 @@
 # 鉴权与接口访问控制
 
-所有 HTTP 请求先经过统一鉴权。管理员用账号密码和 Cookie 登录后台；程序通过独立 API Key 或 IP 白名单调用业务接口。未明确授权的新接口默认仅管理员可访问。
+所有 HTTP 请求先经过统一鉴权。管理员登录会话、有效 API Key、启用的 IP 白名单是三种等价的鉴权方式，任一满足即可访问全部接口和后台页面，包括管理操作、接口文档以及后续新增接口。未通过任何一种鉴权的请求仍被拒绝（公开资源除外）。
 
 ## 初始化和登录
 
@@ -23,7 +23,7 @@ uv run python scripts/set_admin_password.py --generate-to data/admin-initial-pas
 
 登录地址不带文件后缀，端口沿用 `app.port` 配置；例如端口配置为 `5019` 时是 `http://127.0.0.1:5019/ui/login`。旧的 `/ui/login.html` 和带尾斜杠的 `/ui/login/` 会跳转至 `/ui/login`。登录页、重新登录弹窗和服务端统一校验 6–12 字符，超出范围返回 `422`。
 
-`GET /auth/session` 返回 `authenticated`，已登录时额外返回用户名和 `expires_at`。`POST /auth/logout` 使当前会话失效并清除 Cookie。会话默认固定 30 分钟，不因操作续期；到期、退出、重启、加载新的管理员账号或密码哈希时失效。同一来源连续失败 5 次锁定 5 分钟，锁定响应为 `429` 并带 `Retry-After`。后台会弹出重新登录窗口，保留当前页面的表单；重新登录后需再次提交，不会自动重放修改请求。
+`GET /auth/session` 返回 `authenticated` 和 `authorized`。登录会话还会返回用户名和 `expires_at`；通过 API Key 或白名单时返回对应身份，不返回会话到期时间。`POST /auth/logout` 只使当前登录会话失效并清除 Cookie，不撤销 API Key 或白名单权限。会话默认固定 30 分钟，不因操作续期；到期、退出、重启、加载新的管理员账号或密码哈希时失效。同一来源连续失败 5 次锁定 5 分钟，锁定响应为 `429` 并带 `Retry-After`。所有鉴权方式都失效后，后台会弹出重新登录窗口，保留当前页面的表单；重新登录后需再次提交，不会自动重放修改请求。
 
 ## 权限
 
@@ -33,14 +33,15 @@ uv run python scripts/set_admin_password.py --generate-to data/admin-initial-pas
 | `GET /admin/rules`、`GET /admin/rules/{rule_id}` | 允许 | 允许 |
 | `GET /admin/projects`、`GET /admin/projects/{key}` | 允许 | 允许 |
 | `GET /admin/history`、`GET /admin/history/{record_id}` | 允许 | 允许 |
-| 新增、修改、删除规则或项目，批量归属调整 | 允许 | 拒绝 |
-| 清空历史、导入、导出、重载配置 | 允许 | 拒绝 |
-| 后台、`/docs`、`/redoc`、`/openapi.json` | 允许 | 拒绝 |
-| 管理 Key / 白名单 | 允许 | 拒绝 |
+| 新增、修改、删除规则或项目，批量归属调整 | 允许 | 允许 |
+| 清空历史、导入、导出、重载配置 | 允许 | 允许 |
+| 后台、`/docs`、`/redoc`、`/openapi.json` | 允许 | 允许 |
+| 管理 Key / 白名单 | 允许 | 允许 |
+| 后续新增接口 | 允许 | 允许 |
 
-`GET /health` 公开返回服务状态、名称和版本，只有管理员会话能看到额外的规则数量和 ID。登录页及其专用 CSS/JS、会话查询为公开资源。其余静态资源和接口均受保护。
+`GET /health` 公开返回服务状态、名称和版本，通过任一种鉴权后都能看到额外的规则数量和 ID。登录页及其专用 CSS/JS、会话查询为公开资源。其余静态资源和接口均受保护。
 
-所有 Key 和白名单共享这套业务权限，**没有按项目、规则、调用方隔离数据**。规则查询会包含提示词等规则定义；历史查询会包含所有调用方的输入和结果。仅向可信程序发放业务凭据。
+所有 Key 和白名单具有完整管理权限，**没有按项目、规则、调用方隔离数据**。规则查询会包含提示词等规则定义；历史查询会包含所有调用方的输入和结果。仅向可信程序发放凭据。
 
 ## API Key 和白名单
 
@@ -60,7 +61,7 @@ curl http://localhost:6549/compare \
   -d '{"rule_id":"R001","field_a":{"value":"2024-001"},"field_b":{"value":"2024-001"}}'
 ```
 
-业务放行是管理员会话 **或** 有效 Key **或** 启用的白名单。因此禁用/删除 Key 后，若来源仍在白名单，访问依然允许。需要逐个停用程序时，不要给它们共享的 NAT 出口添加免密白名单。禁用凭据不会撤销已接收的比对任务。
+全部接口的放行条件是管理员会话 **或** 有效 Key **或** 启用的白名单。因此禁用/删除 Key 后，若来源仍在白名单，访问依然允许。需要逐个停用程序时，不要给它们共享的 NAT 出口添加免密白名单。禁用凭据不会撤销已接收的比对任务。
 
 管理 API：`GET /admin/access-control` 返回 `{version, api_keys, ip_allowlist}`。修改用 `POST /admin/access-control/{kind}`，`kind` 为 `api_keys` 或 `ip_allowlist`：
 
@@ -100,7 +101,7 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 6549 --workers 1 --no-proxy-he
 
 直连时忽略客户端提交的 `X-Forwarded-For`。仅当网络直连对端属于 `trusted_proxies`，才从 XFF 最右侧向外解析，并停在第一个不可信节点。无效链拒绝用作白名单匹配。Nginx 等代理应保留真实 `Host`，设置 `X-Forwarded-For` 和 `X-Forwarded-Proto`，只将实际代理的地址/网段列为可信。不要信任 `0.0.0.0/0` 等任意来源。
 
-HTTPS 部署将 `secure_cookie` 设为 `true`。当前不开放跨域 CORS，浏览器跨站请求被拒绝；登录及携带管理员 Cookie 的修改请求需要 `X-Requested-With: XMLHttpRequest`，此请求头不是凭据。后台会自动附加；脚本模拟管理员或用接口文档执行修改时也要携带。Key 面向程序的服务端调用，不意味着任意网站都能跨域访问。
+HTTPS 部署将 `secure_cookie` 设为 `true`。当前不开放跨域 CORS，浏览器跨站请求被拒绝；使用管理员 Cookie 的登录及修改请求需要 `X-Requested-With: XMLHttpRequest`，此请求头不是凭据。后台会自动附加；脚本模拟管理员 Cookie 或用接口文档执行修改时也要携带。有效 Key 和白名单不依赖 Cookie 的 CSRF 请求头，仍受同源校验约束。
 
 YAML 需要对服务进程可写，且其**父目录**也需可写；Docker 挂载整个 `config/` 目录以支持原子替换，避免只挂载单个 YAML 文件。写入使用独立的 `config.yaml.lock` 文件协调服务与密码重置命令，避免并发保存恢复旧凭据；运行期间不要删除锁文件。编辑器手工保存不会遵循该锁，应避开后台保存操作。多个服务实例仍不受支持，因为会话和失败计数并未共享。
 
