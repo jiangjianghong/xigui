@@ -182,6 +182,7 @@ function fillForm(r) {
     document.getElementById('f-output-schema').value = JSON.stringify(
         r.output_schema || defaultOutputSchema(), null, 2
     );
+    OutputSchemaEditor.mount('f-output-schema-editor', 'f-output-schema', 'f-output-schema-preview');
     onRuleTypeChange();
 
     // 字段行:优先 field_defs(自定义 ID);没配则按模板反推个数,ID 留空表示用字母键。
@@ -205,11 +206,7 @@ function readForm() {
     const ruleType = document.getElementById('f-rule-type').value;
     let outputSchema = null;
     if (ruleType === 'custom' && document.getElementById('f-custom-json').checked) {
-        try {
-            outputSchema = JSON.parse(document.getElementById('f-output-schema').value);
-        } catch (_) {
-            outputSchema = undefined;
-        }
+        outputSchema = OutputSchemaEditor.collect() || undefined;
     }
     return {
         id: document.getElementById('f-id').value.trim(),
@@ -267,12 +264,13 @@ function updatePromptPreview() {
     const ruleType = document.getElementById('f-rule-type').value;
     let schema = null;
     if (ruleType === 'custom' && document.getElementById('f-custom-json').checked) {
-        try {
-            schema = JSON.parse(document.getElementById('f-output-schema').value);
-        } catch (e) {
-            preview.textContent = `${document.getElementById('f-prompt').value.trim()}\n\n输出 JSON Schema 格式错误: ${e.message}`;
+        const schemaError = OutputSchemaEditor.validationError();
+        if (schemaError) {
+            const task = document.getElementById('f-prompt').value.trim();
+            preview.textContent = `${task ? `${task}\n\n` : ''}输出结构未完成：${schemaError}`;
             return;
         }
+        schema = OutputSchemaEditor.collect();
     }
     const task = document.getElementById('f-prompt').value.trim();
     const instruction = outputFormatInstruction(ruleType, schema);
@@ -284,10 +282,16 @@ async function saveRule() {
     if (!payload.id) { toast('id 不能为空', 'error'); return; }
     if (!payload.prompt_template.trim()) { toast('prompt_template 不能为空', 'error'); return; }
     if (payload.rule_type === 'custom' && document.getElementById('f-custom-json').checked) {
+        const schemaError = OutputSchemaEditor.validationError();
+        if (schemaError) {
+            toast(`输出结构有误：${schemaError}`, 'error');
+            OutputSchemaEditor.focusFirstInvalid();
+            return;
+        }
         if (!payload.output_schema || payload.output_schema.type !== 'object' ||
             !payload.output_schema.properties || typeof payload.output_schema.properties !== 'object') {
             toast('请填写有效的 object JSON Schema，且至少定义一个输出字段', 'error');
-            document.getElementById('f-output-schema').focus();
+            OutputSchemaEditor.focusFirstInvalid();
             return;
         }
     }
