@@ -96,7 +96,8 @@ class CompareResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     rule_id: str
-    result: bool = Field(..., description="比对结果。True 表示通过/一致")
+    rule_type: str = "judge"
+    result: Any = Field(..., description="判断模式为布尔值；custom 模式为字符串或 JSON 结果")
     reason: str = Field(..., description="判断理由（中文）")
     time: int = Field(..., description="本次调用耗时，毫秒")
     cost: Cost = Field(default_factory=Cost)

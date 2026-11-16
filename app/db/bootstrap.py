@@ -1,8 +1,4 @@
-"""启动时建库建表。
-
-范围明确：只建库、只建表。**不做字段自动迁移**（spec 决策 6）——表结构变更
-由人工执行 SQL，参考 ``docs/schema.sql``。
-"""
+"""启动时建库建表，并应用受控的向前兼容字段迁移。"""
 
 from __future__ import annotations
 
@@ -13,6 +9,7 @@ from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from app.core.config import build_db_url, get_db_config
+from app.db.migrations import migrate_schema
 from app.db.models import Base
 
 log = logging.getLogger("aicheck.db")
@@ -67,7 +64,7 @@ def ensure_database() -> None:
 
 
 def ensure_tables(engine: Engine) -> None:
-    """表不存在则建。已存在的表不动。
+    """确保表存在，再补齐应用明确登记的缺失字段。
 
     外层的 try/except 兜多实例首次同时启动的窄竞态：``create_all`` 的
     checkfirst 与实际 CREATE 之间有间隙，两个进程可能同时判定「表不存在」。
@@ -78,16 +75,25 @@ def ensure_tables(engine: Engine) -> None:
         msg = str(e).lower()
         if "already exists" in msg or "duplicate" in msg:
             log.warning("建表时撞上并发创建，已忽略: %s", e)
-            return
-        log.error(
-            "建表失败: %s\n应用账号需要 CREATE 权限，或参考 docs/schema.sql 手工执行 DDL。",
-            e,
+        else:
+            log.error(
+                "建表失败: %s\n应用账号需要 CREATE 权限，或参考 docs/schema.sql 手工执行 DDL。",
+                e,
+            )
+            raise
+
+    try:
+        migrate_schema(engine)
+    except (OperationalError, ProgrammingError):
+        log.exception(
+            "数据库字段自动迁移失败。已有数据库需要 ALTER 权限；"
+            "如应用账号无此权限，请参考 docs/migrations 中的 SQL 迁移脚本。"
         )
         raise
 
 
 def bootstrap_database(engine: Engine | None = None) -> Engine:
-    """建库 + 建表，返回可用引擎。启动时调用一次。"""
+    """建库 + 建表 + 向前迁移，返回可用引擎。启动时调用一次。"""
     ensure_database()
     if engine is None:
         from app.db.session import get_engine

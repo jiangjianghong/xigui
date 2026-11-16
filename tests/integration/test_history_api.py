@@ -53,6 +53,16 @@ def test_filter_by_result(client, seeded):
     assert body["items"][0]["rule_id"] == "R002"
 
 
+def test_boolean_result_filter_ignores_custom_values(client, db, seeded):
+    repo_history.add(db, dict(REC, rule_id="RCUSTOM", rule_type="custom", result="false"))
+    db.commit()
+
+    body = client.get("/admin/history?result=false").json()
+
+    assert body["total"] == 1
+    assert body["items"][0]["rule_id"] == "R002"
+
+
 def test_pagination(client, seeded):
     body = client.get("/admin/history?limit=1&offset=0").json()
     assert body["total"] == 2

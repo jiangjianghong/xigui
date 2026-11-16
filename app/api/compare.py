@@ -23,6 +23,7 @@ from app.core.llm_client import LLMTimeout, LLMUpstreamError
 from app.db import repo_history, repo_rules
 from app.db.session import get_db
 from app.rules.field_keys import field_keys_for
+from app.rules.base import LLMOutputError
 from app.rules.registry import build_rule, should_require_field_name
 from app.schemas.compare import CompareRequest, CompareResponse, Cost
 
@@ -113,6 +114,12 @@ def compare(req: CompareRequest, db: Session = Depends(get_db)) -> CompareRespon
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"LLM 上游错误: {e}",
         ) from e
+    except LLMOutputError as e:
+        log.error("LLM 输出格式无效 rule_id=%s: %s", req.rule_id, e)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"LLM 输出格式无效: {e}",
+        ) from e
     except Exception as e:  # noqa: BLE001
         log.exception("规则执行未捕获异常 rule_id=%s", req.rule_id)
         raise HTTPException(
@@ -121,9 +128,15 @@ def compare(req: CompareRequest, db: Session = Depends(get_db)) -> CompareRespon
         ) from e
 
     elapsed_ms = int((time.perf_counter() - t0) * 1000)
+    result_kind = (
+        "boolean" if type(res.match) is bool
+        else "string" if isinstance(res.match, str)
+        else "json"
+    )
     log.info(
-        "比对完成 rule_id=%s match=%s ms=%d usage=%s reason=%r",
-        req.rule_id, res.match, elapsed_ms, res.usage, res.reason[:200],
+        "比对完成 rule_id=%s type=%s result_kind=%s ms=%d usage=%s reason=%r",
+        req.rule_id, rule_cfg.get("rule_type", "judge"), result_kind,
+        elapsed_ms, res.usage, res.reason[:200],
     )
     # extra 字段可能含 LLM 原始返回片段，仅 debug 级别打印
     log.debug("extra rule_id=%s extra=%s", req.rule_id, res.extra)
@@ -134,6 +147,7 @@ def compare(req: CompareRequest, db: Session = Depends(get_db)) -> CompareRespon
         repo_history.add(db, {
             "rule_id": req.rule_id,
             "rule_name": rule_row.name or "",
+            "rule_type": rule_cfg.get("rule_type", "judge"),
             "project_key": rule_row.project.key if rule_row.project else None,
             "project_name": rule_row.project.name if rule_row.project else None,
             "fields": [{"key": k, **f.model_dump()} for k, f in ordered],
@@ -150,6 +164,7 @@ def compare(req: CompareRequest, db: Session = Depends(get_db)) -> CompareRespon
 
     return CompareResponse(
         rule_id=req.rule_id,
+        rule_type=rule_cfg.get("rule_type", "judge"),
         result=res.match,
         reason=res.reason,
         time=elapsed_ms,

@@ -8,7 +8,7 @@
 
 - 输入:规则 ID + 平铺的字段键 `{rule_id, field_a: {name?, value}, field_b: {...}}`。键名由规则的 `field_defs` 决定,未配则是 `field_a`/`field_b`/...
 - 处理:按规则配的 `prompt_template` 调 LLM 做比对
-- 输出:`{rule_id, result, reason, time, cost}`
+- 输出:`{rule_id, rule_type, result, reason, time, cost}`。判断规则的 `result` 是布尔值；custom 规则的 `result` 是纯文本字符串或结构化 JSON。
 
 **所有规则都走 LLM**,判定边界由规则的 `prompt_template` 用自然语言描述。规则存在 **MySQL** 里,通过 Web UI 或接口增删改,**改完立即生效**(每次请求实时读库,没有缓存)。`config/rules.yaml` 已降级为**导入导出的载体格式**——直接编辑它不会生效。
 
@@ -54,7 +54,8 @@ make build && make up && make logs
 规则、项目、比对历史都存在 MySQL。启动时会**自动建库建表**(`CREATE DATABASE IF NOT EXISTS` + 建表),因此:
 
 - 应用账号需要 `CREATE` 权限;若不便授权,把 `docs/schema.sql` 交给 DBA 手工执行即可
-- **不做字段自动迁移**——后续表结构变更需人工执行 `ALTER`,并同步更新 `docs/schema.sql` 与 `app/db/models.py`
+- 服务启动时会检测并补齐判断/custom 功能所需的字段；已有历史 `result` 会迁移为 JSON，保留原有 true/false 值
+- 已有数据库账号需要 `ALTER` 权限才能自动升级；新建数据库仍由 ORM 自动建表。手工升级 SQL 仅作为启动迁移失败时的参考
 
 首次启动且 `rules` 表为空时,会自动从 `config/rules.yaml` 导入一次(日志里能看到"首次启动,从 ... 导入 N 条规则")。限定"表为空"才导,是为了避免删光规则后重启又全部长回来。也可手工重跑:
 
@@ -86,7 +87,7 @@ curl -X POST http://localhost:6549/compare \
   -d '{"rule_id":"R001",
        "field_a":{"name":"项目代码","value":"  2024-001 "},
        "field_b":{"name":"项目代码","value":"2024-001"}}'
-# {"rule_id":"R001","result":true,"reason":"两个项目代码一致","time":312,
+# {"rule_id":"R001","rule_type":"judge","result":true,"reason":"两个项目代码一致","time":312,
 #  "cost":{"prompt_tokens":156,"completion_tokens":12,"total_tokens":168},
 #  "field_a":{"name":"项目代码","value":"  2024-001 "},
 #  "field_b":{"name":"项目代码","value":"2024-001"}}
@@ -104,7 +105,7 @@ curl -X POST http://localhost:6549/compare \
 
 ## 规则配置
 
-所有规则统一为 LLM 规则,字段:`id` / `name` / `description` / `prompt_template` / `system_prompt` / `require_field_name` / `field_defs` / `project` 等。规则真源是 **MySQL**,新增规则**不需改代码**:
+所有规则统一为 LLM 规则,字段:`id` / `name` / `description` / `rule_type` / `prompt_template` / `system_prompt` / `require_field_name` / `field_defs` / `output_schema` / `project` 等。`rule_type` 为 `judge` 时返回布尔结论；为 `custom` 时返回纯文本或按 `output_schema` 校验的 JSON。规则真源是 **MySQL**,新增规则**不需改代码**:
 
 - **Web UI**(推荐):打开 `http://localhost:6549/ui/`,在"规则管理"页点"新增规则",填好字段保存即刻生效。每个字段下方都有用法说明。
 - **导入 yaml**:UI 右上角「导入」上传 yaml,按 `id` **合并 upsert**——库里有则覆盖、没有则新增,库里有而文件没有的原封不动。因此可以只导入几条规则的片段文件。任何一条校验不过则**整体回滚**,不会留下导入一半的状态。

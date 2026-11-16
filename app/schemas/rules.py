@@ -8,8 +8,11 @@
 from __future__ import annotations
 
 import re
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from app.rules.output_schema import OutputSchemaError, validate_output_schema
 
 # 标识符的合法形态。字段 ID 与项目 key 共用——两者都会成为对外的键/路径，
 # 规则一致才不会让人记两套。
@@ -28,6 +31,9 @@ class RuleIn(BaseModel):
     )
     name: str | None = Field(default="", description="中文规则名(用于日志/展示)")
     description: str | None = Field(default="", description="规则描述，仅文档用")
+    rule_type: Literal["judge", "custom"] = Field(
+        default="judge", description="判断规则返回布尔值；custom 规则返回自定义内容"
+    )
     field_defs: list[str] | None = Field(
         default=None,
         description=(
@@ -47,6 +53,21 @@ class RuleIn(BaseModel):
         min_length=1,
         description="prompt 模板，占位符与字段键同名:{field_a} 或 {keyan_name}",
     )
+    output_schema: dict[str, Any] | None = Field(
+        default=None,
+        description="custom 结构化输出的 JSON Schema；省略时 custom 返回纯文本",
+    )
+
+    @model_validator(mode="after")
+    def _check_output_schema(self) -> RuleIn:
+        if self.output_schema is not None:
+            if self.rule_type != "custom":
+                raise ValueError("只有 custom 规则可以配置 output_schema")
+            try:
+                validate_output_schema(self.output_schema)
+            except OutputSchemaError as e:
+                raise ValueError(str(e)) from e
+        return self
 
     @field_validator("field_defs")
     @classmethod

@@ -2,8 +2,8 @@
 --
 -- 应用启动时会自动建库建表(见 app/db/bootstrap.py),本文件用于:
 --   1. 应用账号无 CREATE 权限时,交给 DBA 手工执行
---   2. 后续表结构变更的对照基准——本项目不做字段自动迁移,
---      改表结构需人工执行 ALTER 并同步更新本文件与 app/db/models.py
+--   2. 当前表结构的对照基准；受控的向前兼容字段迁移在 app/db/migrations.py
+--      中登记，并于启动时检测、补齐
 --
 -- 字符集固定 utf8mb4:规则里全是中文 prompt。
 
@@ -30,10 +30,12 @@ CREATE TABLE IF NOT EXISTS `rules` (
   `project_id`         BIGINT       NULL COMMENT 'NULL = 未分组',
   `name`               VARCHAR(128) NOT NULL DEFAULT '',
   `description`        VARCHAR(512) NOT NULL DEFAULT '',
+  `rule_type`          VARCHAR(16)  NOT NULL DEFAULT 'judge' COMMENT 'judge/custom',
   `field_defs`         JSON         NULL COMMENT 'list[str];NULL 表示用默认 field_a/field_b',
   `require_field_name` TINYINT(1)   NOT NULL DEFAULT 0,
   `system_prompt`      TEXT         NULL,
   `prompt_template`    TEXT         NOT NULL,
+  `output_schema`      JSON         NULL COMMENT 'custom 模式的 JSON Schema',
   `sort_order`         INT          NOT NULL DEFAULT 0,
   `created_at`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at`         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -50,10 +52,11 @@ CREATE TABLE IF NOT EXISTS `compare_history` (
   `id`           BIGINT       NOT NULL AUTO_INCREMENT,
   `rule_id`      VARCHAR(64)  NOT NULL,
   `rule_name`    VARCHAR(128) NOT NULL DEFAULT '',
+  `rule_type`    VARCHAR(16)  NOT NULL DEFAULT 'judge',
   `project_key`  VARCHAR(64)  NULL,
   `project_name` VARCHAR(128) NULL,
   `fields`       JSON         NOT NULL,
-  `result`       TINYINT(1)   NOT NULL,
+  `result`       JSON         NOT NULL,
   `reason`       TEXT         NULL,
   `time_ms`      INT          NOT NULL,
   `cost`         JSON         NULL,

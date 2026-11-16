@@ -13,8 +13,27 @@ BASE = {"id": "R001", "prompt_template": "A:{field_a}"}
 def test_rule_minimal():
     r = RuleIn(**BASE)
     assert r.id == "R001"
+    assert r.rule_type == "judge"
     assert r.require_field_name is False
     assert r.project is None
+
+
+def test_custom_rule_accepts_output_schema():
+    schema = {
+        "type": "object",
+        "properties": {"summary": {"type": "string"}},
+        "required": ["summary"],
+    }
+    rule = RuleIn(**BASE, rule_type="custom", output_schema=schema)
+    assert rule.output_schema == schema
+
+
+def test_judge_rule_rejects_output_schema():
+    with pytest.raises(ValidationError, match="只有 custom"):
+        RuleIn(
+            **BASE,
+            output_schema={"type": "object", "properties": {"summary": {"type": "string"}}},
+        )
 
 
 def test_rule_accepts_project_key():

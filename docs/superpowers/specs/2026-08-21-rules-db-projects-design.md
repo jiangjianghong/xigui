@@ -54,11 +54,11 @@
 
 现有 `rules.yaml` 无 `projects:` 节点、无 `project:` 字段，导入后全部为未分组——向后兼容。
 
-### 决策 6：自动建库建表，不做字段自动迁移
+### 决策 6：自动建库建表，并执行登记过的向前兼容迁移
 
-启动时自动 `CREATE DATABASE IF NOT EXISTS` + `create_all`。表结构后续变更由人工执行 SQL，`docs/schema.sql` 作为参考。
+启动时自动 `CREATE DATABASE IF NOT EXISTS` + `create_all`，然后运行 `app/db/migrations.py` 中登记的迁移。迁移先检查字段是否存在，只补齐缺少的字段；需要转换既有数据时，必须提供可重复执行且保留数据的迁移步骤。
 
-不做字段自动迁移（`ADD COLUMN` / `CREATE INDEX` 的自动对齐）是本次明确排除的范围。
+未登记的结构变化（例如删除字段、调整约束或新增索引）仍通过显式迁移处理，并同步更新 `docs/schema.sql`。自动迁移不得把任意 ORM 元数据差异直接应用到生产库。
 
 ### 决策 7：`/compare` 响应不新增 `project` 字段
 

@@ -446,6 +446,7 @@
                                     </th>
                                     <th>ID</th>
                                     <th>规则名</th>
+                                    <th>模式</th>
                                     <th>项目</th>
                                     <th>name 必填</th>
                                     <th>system_prompt</th>
@@ -512,7 +513,7 @@
                     </div>
                     <div id="pg-result-box" class="hidden"></div>
 
-                    <h3 class="text-sm font-bold text-surface-700 mt-5 mb-2">当前 prompt_template 预览</h3>
+                    <h3 class="text-sm font-bold text-surface-700 mt-5 mb-2">完整提示词预览</h3>
                     <pre id="pg-prompt-preview" class="code-block">(选规则后展示)</pre>
                 </div>
             </div>
@@ -636,6 +637,16 @@
                     <input id="f-desc" class="input" placeholder="判断两个建设地点描述是否指向同一位置">
                 </div>
 
+                <!-- rule type -->
+                <div>
+                    <div class="field-label"><span class="name">规则模式</span><span class="required">*</span></div>
+                    <p class="field-help">判断模式返回 true/false；custom 模式返回自定义文本或 JSON 结果。</p>
+                    <select id="f-rule-type" class="input" onchange="onRuleTypeChange()">
+                        <option value="judge">判断</option>
+                        <option value="custom">custom</option>
+                    </select>
+                </div>
+
                 <!-- project -->
                 <div>
                     <div class="field-label"><span class="name">project</span></div>
@@ -673,9 +684,29 @@
                 <!-- prompt_template -->
                 <div>
                     <div class="field-label"><span class="name">prompt_template</span><span class="required">*</span></div>
-                    <p class="field-help">规则的核心,用自然语言描述判定标准。占位符与字段 ID 同名:<code>{field_a}</code> <code>{field_b}</code> ... 或自定义的 <code>{keyan_name}</code>;加 <code>_name</code> 后缀引用字段名。<b>JSON 示例里的大括号要写双重 {{ }}</b>,否则 .format 会报错。</p>
+                    <p class="field-help">写业务任务和判定标准。占位符与字段 ID 同名:<code>{field_a}</code> <code>{field_b}</code> ... 或自定义的 <code>{keyan_name}</code>;加 <code>_name</code> 后缀引用字段名。输出格式会根据规则模式自动追加。</p>
                     <div id="f-chips" class="mb-2"></div>
-                    <textarea id="f-prompt" class="input" rows="10" placeholder="请判断以下字段是否一致...&#10;A: {field_a}&#10;B: {field_b}&#10;严格按 JSON 输出: {{&quot;match&quot;: true|false, &quot;reason&quot;: &quot;...&quot;}}"></textarea>
+                    <textarea id="f-prompt" class="input" rows="8" oninput="updatePromptPreview()" placeholder="描述要执行的判断或生成任务...&#10;字段A: {field_a}&#10;字段B: {field_b}"></textarea>
+                </div>
+
+                <div id="f-custom-output" class="hidden border-t border-surface-200 pt-4">
+                    <div class="field-label">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input id="f-custom-json" type="checkbox" onchange="onCustomSchemaToggle()">
+                            <span class="name">格式化为 JSON</span>
+                        </label>
+                    </div>
+                    <p class="field-help">不勾选时返回纯文本。勾选后填写 JSON Schema；系统会要求模型按结构输出并校验结果。</p>
+                    <div id="f-output-schema-wrap" class="hidden mt-3">
+                        <label class="field-label" for="f-output-schema"><span class="name">输出 JSON Schema</span></label>
+                        <textarea id="f-output-schema" class="input font-mono text-sm" rows="9" spellcheck="false" oninput="updatePromptPreview()" aria-describedby="f-output-schema-help"></textarea>
+                        <p id="f-output-schema-help" class="field-help">根类型必须为 object。支持 object、array、string、number、integer、boolean、null，以及 properties、required、items、enum、additionalProperties、description 和 title。</p>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="field-label"><span class="name">完整提示词预览</span></div>
+                    <pre id="f-full-prompt-preview" class="code-block" style="white-space:pre-wrap;max-height:260px;overflow:auto"></pre>
                 </div>
             </div>
 

@@ -85,8 +85,8 @@ app = FastAPI(
     title="AI交叉校验 - 规则比对引擎",
     version="0.1.0",
     description=(
-        "投资项目文件合规审核第二阶段:按规则 ID 调用 LLM 比对两个字段,"
-        "返回布尔结论 + 中文理由 + 耗时 + token 成本。规则配置见 config/rules.yaml,支持热加载。"
+        "投资项目文件合规审核第二阶段:按规则 ID 调用 LLM 执行判断或自定义输出,"
+        "返回结果、中文理由、耗时与 token 成本。规则配置存于 MySQL,每次请求实时读取。"
     ),
     lifespan=lifespan,
 )

@@ -86,8 +86,9 @@
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
 | `rule_id` | string | 回显传入的规则 ID |
-| `result` | bool | `true` 表示比对通过(具体判定标准由该规则的 `prompt_template` 决定) |
-| `reason` | string | 中文理由(由 LLM 给出) |
+| `rule_type` | string | `judge` 或 `custom` |
+| `result` | bool \| string \| object | 判断规则返回布尔值；custom 规则返回字符串或 JSON 对象 |
+| `reason` | string | 简短、可核验的中文理由(由 LLM 给出) |
 | `time` | int | 本次调用耗时，单位毫秒 |
 | `cost.prompt_tokens` | int | LLM 输入 token |
 | `cost.completion_tokens` | int | LLM 输出 token |
@@ -99,6 +100,7 @@
 ```json
 {
   "rule_id": "cross_rule_01",
+  "rule_type": "judge",
   "result": true,
   "reason": "1.2亿等于12000万元",
   "time": 1520,
@@ -137,7 +139,7 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
 | HTTP | 触发条件 | 响应体 |
 | --- | --- | --- |
 | 200 | 比对成功(无论 true / false) | `CompareResponse` |
-| 200 | LLM 输出非合法 JSON | `result: false, reason: "LLM 输出非法 JSON"` |
+| 200 | 判断模式的 LLM 输出非合法 JSON | `result: false, reason: "LLM 输出非法 JSON"` |
 | 422 | 字段值形状不对(缺 `value`、值不是对象、传了已废弃的 `fields` 数组) | FastAPI 默认 |
 | 422 | 字段键不匹配:少传/多传/拼错 | `{"detail":"rule cross_rule_XX 缺少字段: field_b（本规则需要: field_a, field_b）"}` |
 | 422 | 规则要求 name 必填但缺失 | `{"detail":"rule cross_rule_XX 要求 field_a.name 必填"}` |
@@ -145,6 +147,7 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
 | 404 | `rule_id` 不存在 | `{"detail":"rule_id 不存在: cross_rule_XX"}` |
 | 500 | 规则配置错误(如 prompt 模板占位符与字段键不匹配) / 其他未捕获异常 | `{"detail":"..."}` |
 | 502 | LLM 上游错误(鉴权/网络) | `{"detail":"LLM 上游错误: ..."}` |
+| 502 | custom 输出不是合法 JSON、缺少字段或不符合输出结构 | `{"detail":"LLM 输出格式无效: ..."}` |
 | 503 | 数据库不可用 | `{"detail":"数据库不可用,请稍后重试"}` |
 | 504 | LLM 调用超时 | `{"detail":"LLM 调用超时: ..."}` |
 
@@ -190,13 +193,14 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
 
 规则存在 MySQL，写操作**立即生效**(下一次 `/compare` 就是新规则)。`rules_loaded` 字段保留，值为库中规则总数。
 
-每条规则的响应都带嵌套 `project`，未分组时为 `null`：
+每条规则的响应都带嵌套 `project`，未分组时为 `null`。旧规则缺少 `rule_type` 时按 `judge` 处理：
 
 ```json
 {
   "id": "cross_rule_01",
   "name": "总投资金额一致",
   "description": "...",
+  "rule_type": "judge",
   "require_field_name": false,
   "system_prompt": "...",
   "prompt_template": "...",
@@ -212,10 +216,12 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
 | `project` | string \| null | 否 | 所属项目的 `key`。`null` 或省略表示未分组。引用不存在的项目返 422 |
 | `name` | string | 否 | 中文规则名（用于日志/展示） |
 | `description` | string | 否 | 规则描述，仅文档用 |
+| `rule_type` | string | 否 | `judge`(默认)返回布尔值；`custom` 返回自定义内容 |
 | `field_defs` | list[string] | 否 | 自定义字段 ID 列表，元素即请求体里的字段键。不写/为空则用 `field_a`/`field_b`/…。元素须匹配 `^[A-Za-z_][A-Za-z0-9_]*$`、规则内不重复、不得为 `rule_id` |
 | `require_field_name` | bool | 否 | 是否要求请求里每个 `field.name` 都必填。默认 `false` |
 | `system_prompt` | string | 否 | LLM 系统提示。留空则不向模型发送 system 消息 |
 | `prompt_template` | string | 是 | prompt 模板，占位符与字段键同名：`{field_a}` 或 `{keyan_name}`，加 `_name` 后缀引用字段名 |
+| `output_schema` | object | 否 | 仅 custom 规则可配置。省略时 `result` 为纯文本；提供 JSON Schema 时 `result` 为符合该结构的对象。系统会自动追加格式要求 |
 
 请求示例：
 
@@ -226,15 +232,20 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
   "name": "新规则示例",
   "description": "示例规则描述",
   "field_defs": ["shenbao_jine", "pifu_jine"],
+  "rule_type": "judge",
   "require_field_name": false,
   "system_prompt": "你是一个校验专家",
-  "prompt_template": "请判断以下两个值是否一致：\nA: {shenbao_jine}\nB: {pifu_jine}\n严格按 JSON 输出: {{\"match\": true|false, \"reason\": \"<理由>\"}}"
+  "prompt_template": "请判断以下两个值是否一致：\nA: {shenbao_jine}\nB: {pifu_jine}"
 }
 ```
 
+`prompt_template` 只写业务任务。执行时系统会自动追加格式要求：判断模式按 `reason` 后 `match` 的顺序输出；custom 模式输出 `reason` 与 `value`，并校验 `value`。已有提示词中的格式说明会保留，建议后续逐条清理以免重复。
+
+`output_schema` 支持 JSON Schema 的 `object`、`array`、`string`、`number`、`integer`、`boolean`、`null` 类型，以及 `properties`、`required`、`items`、`enum`、`additionalProperties`、`description` 和 `title`。
+
 ### 6. 请求历史记录
 
-> 每次 `/compare` 请求完成后自动记录，支持按规则 ID 和结果过滤。
+> 每次 `/compare` 成功后自动记录，支持按规则 ID 过滤；`result=true/false` 仅筛选判断模式记录。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -252,7 +263,7 @@ curl -X POST http://localhost:6549/compare -H "Content-Type: application/json" \
 | 参数 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `rule_id` | string | 否 | 按规则 ID 过滤 |
-| `result` | bool | 否 | 按比对结果过滤（`true`=一致，`false`=不一致） |
+| `result` | bool | 否 | 仅按判断模式结果过滤（`true`=一致，`false`=不一致）；不匹配 custom 结果 |
 | `limit` | int | 否 | 每页数量，默认 50，最大 200 |
 | `offset` | int | 否 | 偏移量，默认 0 |
 
@@ -490,7 +501,7 @@ curl -X POST http://localhost:6549/admin/import \
 
 `host` / `port` / `database` / `username` / `password` 五项支持同名大写环境变量覆盖(`MYSQL_HOST` 等)，优先级高于配置文件——生产不想把密码写进文件时用。其余四项只读配置文件。
 
-启动时**自动建库建表**，需要应用账号有 `CREATE` 权限；无权限时把 `docs/schema.sql` 交给 DBA 手工执行。**不做字段自动迁移**,表结构变更需人工 `ALTER` 并同步更新 `docs/schema.sql` 与 `app/db/models.py`。
+启动时**自动建库建表并迁移判断/custom 所需字段**：应用账号需要 `CREATE` 权限；升级已有数据库还需要 `ALTER` 权限。迁移会检测缺少的字段后再添加，并将历史布尔结果升级为 JSON。无权限时可参考 `docs/schema.sql` 和 `docs/migrations/2026-11-16-custom-rule-output.sql` 手工升级。
 
 ### 规则种子 / 导入导出格式 (config/rules.yaml)
 
@@ -514,7 +525,7 @@ curl -X POST http://localhost:6549/admin/import \
 **Prompt 占位符说明**：
 - `{键}` 引用字段值，`{键_name}` 引用字段名
 - 键名由 `field_defs` 决定；未配置时是 `field_a`、`field_b`、`field_c`…
-- `match` 必须让模型输出 `true|false`，输出中文会被 `bool()` 判成 `True`
+- 判断模式的 `match` 必须是 JSON 布尔值 `true` 或 `false`；其他类型按非法结果处理
 - JSON 示例中的大括号要写成双重 `{{ }}`，否则 `.format()` 会报错
 
 **改规则的方式**：

@@ -107,11 +107,15 @@ function renderRules() {
         const projBadge = r.project
             ? `<span class="badge badge-success">${escape(r.project.name)}</span>`
             : '<span class="badge badge-gray">未分组</span>';
+        const ruleTypeBadge = r.rule_type === 'custom'
+            ? '<span class="badge badge-info">custom</span>'
+            : '<span class="badge badge-gray">判断</span>';
         const checked = (typeof isSelected === 'function' && isSelected(r.id)) ? 'checked' : '';
         return `<tr class="table-row">
             <td><input type="checkbox" class="rule-check" data-id="${escape(r.id)}" ${checked} onchange="toggleSelect('${escape(r.id)}', this.checked)"></td>
             <td><code class="font-mono text-brand-700">${escape(r.id)}</code></td>
             <td>${escape(r.name || '')}</td>
+            <td>${ruleTypeBadge}</td>
             <td>${projBadge}</td>
             <td>${reqBadge}</td>
             <td>${sysBadge}</td>
@@ -137,7 +141,7 @@ function openCreate() {
     document.getElementById('modal-title').textContent = '新增规则';
     document.getElementById('f-id').disabled = false;
     fillForm({ id: '', name: '', description: '',
-               require_field_name: false, system_prompt: '', prompt_template: '' });
+               rule_type: 'judge', require_field_name: false, system_prompt: '', prompt_template: '' });
     document.getElementById('rule-modal').classList.remove('hidden');
 }
 
@@ -173,6 +177,12 @@ function fillForm(r) {
     document.getElementById('f-require').value = r.require_field_name ? 'true' : 'false';
     document.getElementById('f-system').value = r.system_prompt || '';
     document.getElementById('f-prompt').value = r.prompt_template || '';
+    document.getElementById('f-rule-type').value = r.rule_type || 'judge';
+    document.getElementById('f-custom-json').checked = Boolean(r.output_schema);
+    document.getElementById('f-output-schema').value = JSON.stringify(
+        r.output_schema || defaultOutputSchema(), null, 2
+    );
+    onRuleTypeChange();
 
     // 字段行:优先 field_defs(自定义 ID);没配则按模板反推个数,ID 留空表示用字母键。
     // field_defs 比模板占位符少时(手改 yaml),按占位符补齐空行,暴露不一致。
@@ -184,6 +194,7 @@ function fillForm(r) {
         while (defs.length < inferred) defs.push('');
     }
     renderFieldDefRows(defs);
+    updatePromptPreview();
 }
 
 function closeModal() {
@@ -191,11 +202,22 @@ function closeModal() {
 }
 
 function readForm() {
+    const ruleType = document.getElementById('f-rule-type').value;
+    let outputSchema = null;
+    if (ruleType === 'custom' && document.getElementById('f-custom-json').checked) {
+        try {
+            outputSchema = JSON.parse(document.getElementById('f-output-schema').value);
+        } catch (_) {
+            outputSchema = undefined;
+        }
+    }
     return {
         id: document.getElementById('f-id').value.trim(),
         name: document.getElementById('f-name').value.trim(),
         description: document.getElementById('f-desc').value.trim(),
         project: (document.getElementById('f-project') || {}).value || null,
+        rule_type: ruleType,
+        output_schema: outputSchema,
         require_field_name: document.getElementById('f-require').value === 'true',
         system_prompt: document.getElementById('f-system').value,
         field_defs: getFieldDefs().map(s => s.trim()),
@@ -203,10 +225,72 @@ function readForm() {
     };
 }
 
+function defaultOutputSchema() {
+    return {
+        type: 'object',
+        properties: {
+            classification: { type: 'string', description: '分类结果' },
+            confidence: { type: 'number', description: '置信度' },
+        },
+        required: ['classification'],
+        additionalProperties: false,
+    };
+}
+
+function outputFormatInstruction(ruleType, outputSchema) {
+    const rationale = '先给出简短、可核验的中文依据，再给出最终结果；不要输出完整的内部推理过程。';
+    if (ruleType !== 'custom') {
+        return `请严格遵守以下输出格式。${rationale}只输出一个合法 JSON 对象，不要 Markdown 或额外文字。格式为：{"reason":"<中文判断依据>","match":true}。match 必须是 JSON 布尔值 true 或 false。`;
+    }
+    if (!outputSchema) {
+        return `请严格遵守以下输出格式。${rationale}只输出一个合法 JSON 对象，不要 Markdown 或额外文字。对象必须按此结构包含 reason 和 value：{"reason":"<中文生成依据>","value":"<字符串结果>"}。value 必须是字符串。`;
+    }
+    return `请严格遵守以下输出格式。${rationale}只输出一个合法 JSON 对象，不要 Markdown 或额外文字。对象必须按此结构包含 reason 和 value：{"reason":"<中文生成依据>","value":<符合下方 JSON Schema 的对象>}。value 必须符合以下 JSON Schema；Schema 只约束 value，不要把 Schema 原样当成结果：\n${JSON.stringify(outputSchema, null, 2)}`;
+}
+
+function onRuleTypeChange() {
+    const ruleType = document.getElementById('f-rule-type').value;
+    document.getElementById('f-custom-output').classList.toggle('hidden', ruleType !== 'custom');
+    onCustomSchemaToggle();
+    updatePromptPreview();
+}
+
+function onCustomSchemaToggle() {
+    const enabled = document.getElementById('f-custom-json').checked;
+    document.getElementById('f-output-schema-wrap').classList.toggle('hidden', !enabled);
+    updatePromptPreview();
+}
+
+function updatePromptPreview() {
+    const preview = document.getElementById('f-full-prompt-preview');
+    if (!preview) return;
+    const ruleType = document.getElementById('f-rule-type').value;
+    let schema = null;
+    if (ruleType === 'custom' && document.getElementById('f-custom-json').checked) {
+        try {
+            schema = JSON.parse(document.getElementById('f-output-schema').value);
+        } catch (e) {
+            preview.textContent = `${document.getElementById('f-prompt').value.trim()}\n\n输出 JSON Schema 格式错误: ${e.message}`;
+            return;
+        }
+    }
+    const task = document.getElementById('f-prompt').value.trim();
+    const instruction = outputFormatInstruction(ruleType, schema);
+    preview.textContent = task ? `${task}\n\n${instruction}` : instruction;
+}
+
 async function saveRule() {
     const payload = readForm();
     if (!payload.id) { toast('id 不能为空', 'error'); return; }
     if (!payload.prompt_template.trim()) { toast('prompt_template 不能为空', 'error'); return; }
+    if (payload.rule_type === 'custom' && document.getElementById('f-custom-json').checked) {
+        if (!payload.output_schema || payload.output_schema.type !== 'object' ||
+            !payload.output_schema.properties || typeof payload.output_schema.properties !== 'object') {
+            toast('请填写有效的 object JSON Schema，且至少定义一个输出字段', 'error');
+            document.getElementById('f-output-schema').focus();
+            return;
+        }
+    }
 
     // 字段 ID 校验(与后端 admin_rules._check_field_defs 同规则)
     const rawDefs = payload.field_defs;
@@ -366,7 +450,7 @@ function renderChips() {
             ? `<span class="chip" title="插入 {${key}_name}" onclick="insertPlaceholder('{${key}_name}')">${escape(key)}·名</span>`
             : '';
         return `<span class="chip" title="插入 {${key}}" onclick="insertPlaceholder('{${key}}')">${escape(key)}</span>${nameChip}`;
-    }).join('') + `<span class="chip" onclick="insertPlaceholder('{{&quot;match&quot;: true|false, &quot;reason&quot;: &quot;<不超过30字>&quot;}}')">JSON 输出范式</span>`;
+    }).join('');
 }
 
 // 占位符 chip 插入到 prompt textarea
@@ -436,9 +520,11 @@ function onPgRuleChange() {
         preview.textContent = '(选规则后展示)';
         return;
     }
-    hint.innerHTML = `<span class="badge badge-info">${r.require_field_name ? 'name 必填' : 'name 可省'}</span>
+    const ruleMode = r.rule_type === 'custom' ? 'custom' : '判断';
+    hint.innerHTML = `<span class="badge badge-info">${ruleMode}</span>
+        <span class="badge badge-gray">${r.require_field_name ? 'name 必填' : 'name 可省'}</span>
         <span class="text-surface-500 ml-1">${escape(r.description || '')}</span>`;
-    preview.textContent = r.prompt_template || '(空)';
+    preview.textContent = `${r.prompt_template || '(空)'}\n\n${outputFormatInstruction(r.rule_type || 'judge', r.output_schema || null)}`;
 
     // 字段输入框:键名即 field_defs 的 ID,没配则 field_a/field_b/...
     const defs = Array.isArray(r.field_defs) && r.field_defs.length ? r.field_defs : null;
@@ -494,17 +580,19 @@ async function runPlayground() {
 
 function renderPgResult(data, browserElapsed) {
     const box = document.getElementById('pg-result-box');
-    const cls = data.result ? 'result-match' : 'result-nomatch';
-    const icon = data.result ? 'ri-checkbox-circle-fill text-brand-600' : 'ri-close-circle-fill text-terra-600';
-    const label = data.result ? '一致 (match=true)' : '不一致 (match=false)';
+    const isCustom = data.rule_type === 'custom';
+    const isMatch = data.result === true;
+    const cls = isMatch ? 'result-match' : 'result-nomatch';
+    const icon = isMatch ? 'ri-checkbox-circle-fill text-brand-600' : 'ri-close-circle-fill text-terra-600';
+    const label = isMatch ? '通过 (match=true)' : '不通过 (match=false)';
+    const resultText = typeof data.result === 'string'
+        ? data.result
+        : JSON.stringify(data.result, null, 2);
+    const resultMarkup = isCustom
+        ? `<div class="result-card"><div class="font-semibold text-surface-900 mb-2">custom 输出</div><pre class="code-block" style="white-space:pre-wrap;max-height:320px;overflow:auto">${escape(resultText)}</pre><div class="text-sm text-surface-700 leading-relaxed mt-3"><b>理由:</b> ${escape(data.reason)}</div></div>`
+        : `<div class="result-card ${cls}"><div class="flex items-center gap-2 mb-2"><i class="${icon} text-xl"></i><span class="font-semibold text-surface-900">${label}</span></div><div class="text-sm text-surface-700 leading-relaxed"><b>理由:</b> ${escape(data.reason)}</div></div>`;
     box.innerHTML = `
-        <div class="result-card ${cls}">
-            <div class="flex items-center gap-2 mb-2">
-                <i class="${icon} text-xl"></i>
-                <span class="font-semibold text-surface-900">${label}</span>
-            </div>
-            <div class="text-sm text-surface-700 leading-relaxed"><b>理由:</b> ${escape(data.reason)}</div>
-        </div>
+        ${resultMarkup}
         <div class="mt-3 grid grid-cols-3 gap-2 text-sm">
             <div class="card p-3"><div class="text-xs text-surface-500">耗时(后端)</div><div class="font-semibold text-surface-900">${data.time} ms</div></div>
             <div class="card p-3"><div class="text-xs text-surface-500">耗时(含网络)</div><div class="font-semibold text-surface-900">${browserElapsed} ms</div></div>
@@ -588,9 +676,15 @@ function renderHistory(data) {
     document.getElementById('history-next').disabled = HISTORY_PAGE >= totalPages - 1;
 
     list.innerHTML = data.items.map(record => {
-        const resultBadge = record.result
-            ? '<span class="badge badge-success">一致</span>'
-            : '<span class="badge badge-warning">不一致</span>';
+        const isCustom = record.rule_type === 'custom';
+        const resultBadge = isCustom
+            ? '<span class="badge badge-info">custom</span>'
+            : record.result === true
+                ? '<span class="badge badge-success">一致</span>'
+                : '<span class="badge badge-warning">不一致</span>';
+        const resultText = typeof record.result === 'string'
+            ? record.result
+            : JSON.stringify(record.result, null, 2);
         const cost = record.cost || {};
         const totalTokens = cost.total_tokens || 0;
         const promptTokens = cost.prompt_tokens || 0;
@@ -628,6 +722,7 @@ function renderHistory(data) {
                         </div>
                     </div>
                 </div>
+                ${isCustom ? `<div class="mb-4"><div class="text-xs text-surface-500 mb-1">custom 输出</div><pre class="code-block" style="white-space:pre-wrap;max-height:320px;overflow:auto">${escape(resultText)}</pre></div>` : ''}
                 <div class="mb-3">
                     <div class="text-xs text-surface-500 mb-1">比对字段</div>
                     <div class="space-y-1">

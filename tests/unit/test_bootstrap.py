@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 import pytest
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.exc import OperationalError
 
 from app.db import bootstrap
@@ -30,6 +30,52 @@ def test_ensure_tables_is_idempotent():
     bootstrap.ensure_tables(engine)
     assert set(inspect(engine).get_table_names()) == {
         "projects", "rules", "compare_history"
+    }
+
+
+def test_ensure_tables_adds_missing_custom_columns():
+    """旧表只补缺失字段，重复启动仍然安全。"""
+    engine = create_engine("sqlite://")
+    bootstrap.Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE rules DROP COLUMN output_schema"))
+        conn.execute(text("ALTER TABLE rules DROP COLUMN rule_type"))
+        conn.execute(text("ALTER TABLE compare_history DROP COLUMN rule_type"))
+
+    bootstrap.ensure_tables(engine)
+    bootstrap.ensure_tables(engine)
+
+    assert {"rule_type", "output_schema"} <= {
+        c["name"] for c in inspect(engine).get_columns("rules")
+    }
+    assert "rule_type" in {
+        c["name"] for c in inspect(engine).get_columns("compare_history")
+    }
+
+
+def test_migrate_legacy_history_result_to_json_booleans():
+    """升级历史结果列时保留旧的 true/false 值。"""
+    engine = create_engine("sqlite://")
+    bootstrap.Base.metadata.create_all(engine)
+    with engine.begin() as conn:
+        conn.execute(text("DROP TABLE compare_history"))
+        conn.execute(text(
+            "CREATE TABLE compare_history "
+            "(id INTEGER PRIMARY KEY, result BOOLEAN NOT NULL)"
+        ))
+        conn.execute(text(
+            "INSERT INTO compare_history (id, result) VALUES (1, 1), (2, 0)"
+        ))
+
+    bootstrap.ensure_tables(engine)
+
+    with engine.connect() as conn:
+        values = conn.execute(
+            text("SELECT result FROM compare_history ORDER BY id")
+        ).scalars().all()
+    assert values == ["true", "false"]
+    assert "result_json" not in {
+        c["name"] for c in inspect(engine).get_columns("compare_history")
     }
 
 

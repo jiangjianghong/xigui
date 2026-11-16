@@ -415,3 +415,63 @@ def test_history_records_field_key(client, db, seeded_rules, mock_llm):
     fields = items[0]["fields"]
     assert [f["key"] for f in fields] == ["field_a", "field_b"]
     assert fields[0]["value"] == "2024-001"
+
+
+def test_custom_compare_returns_structured_result_and_records_history(client, db, monkeypatch):
+    repo_rules.create(db, {
+        "id": "RCUSTOM",
+        "rule_type": "custom",
+        "prompt_template": "提取分类:{field_a}",
+        "output_schema": {
+            "type": "object",
+            "properties": {"category": {"type": "string"}},
+            "required": ["category"],
+            "additionalProperties": False,
+        },
+    })
+    db.commit()
+
+    def _fake(messages, **kwargs):
+        return ('{"reason":"文本说明供水用途","value":{"category":"供水工程"}}',
+                {"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": 9})
+
+    monkeypatch.setattr(llm_rule, "chat_json", _fake)
+    resp = client.post("/compare", json={
+        "rule_id": "RCUSTOM",
+        "field_a": {"value": "新建供水管网"},
+    })
+
+    assert resp.status_code == 200
+    assert resp.json()["rule_type"] == "custom"
+    assert resp.json()["result"] == {"category": "供水工程"}
+    history = repo_history.list_records(db, rule_id="RCUSTOM")["items"]
+    assert history[0]["result"] == {"category": "供水工程"}
+    assert history[0]["rule_type"] == "custom"
+
+
+def test_custom_invalid_output_returns_502_without_history(client, db, monkeypatch):
+    repo_rules.create(db, {
+        "id": "RCUSTOM_BAD",
+        "rule_type": "custom",
+        "prompt_template": "提取分类:{field_a}",
+        "output_schema": {
+            "type": "object",
+            "properties": {"category": {"type": "string"}},
+            "required": ["category"],
+        },
+    })
+    db.commit()
+
+    def _fake(messages, **kwargs):
+        return ('{"reason":"分类","value":{"category":3}}',
+                {"prompt_tokens": 5, "completion_tokens": 4, "total_tokens": 9})
+
+    monkeypatch.setattr(llm_rule, "chat_json", _fake)
+    resp = client.post("/compare", json={
+        "rule_id": "RCUSTOM_BAD",
+        "field_a": {"value": "新建供水管网"},
+    })
+
+    assert resp.status_code == 502
+    assert "JSON Schema" in resp.json()["detail"]
+    assert repo_history.list_records(db, rule_id="RCUSTOM_BAD")["total"] == 0

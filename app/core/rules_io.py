@@ -31,8 +31,8 @@ def normalize_rule(cfg: dict[str, Any]) -> Any:
     out = CommentedMap()
     # 固定字段顺序,与现有 yaml 视觉一致
     order = [
-        "id", "project", "name", "description", "field_defs",
-        "require_field_name", "system_prompt", "prompt_template",
+        "id", "project", "name", "description", "rule_type", "field_defs",
+        "require_field_name", "system_prompt", "prompt_template", "output_schema",
     ]
     for key in order:
         if key not in cfg:

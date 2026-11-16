@@ -18,10 +18,11 @@ def add(db: Session, record: dict[str, Any]) -> str:
     row = CompareHistory(
         rule_id=record.get("rule_id", ""),
         rule_name=record.get("rule_name") or "",
+        rule_type=record.get("rule_type") or "judge",
         project_key=record.get("project_key"),
         project_name=record.get("project_name"),
         fields=record.get("fields") or [],
-        result=bool(record.get("result")),
+        result=record.get("result"),
         reason=record.get("reason"),
         time_ms=int(record.get("time_ms") or 0),
         cost=record.get("cost") or {},
@@ -55,8 +56,21 @@ def list_records(
         stmt = stmt.where(CompareHistory.rule_id == rule_id)
         count_stmt = count_stmt.where(CompareHistory.rule_id == rule_id)
     if result is not None:
-        stmt = stmt.where(CompareHistory.result == result)
-        count_stmt = count_stmt.where(CompareHistory.result == result)
+        dialect = db.get_bind().dialect.name
+        result_expr = func.json_extract(CompareHistory.result, "$")
+        if dialect == "mysql":
+            result_expr = func.json_unquote(result_expr)
+            expected: Any = "true" if result else "false"
+        elif dialect == "sqlite":
+            expected = int(result)
+        else:
+            result_expr = CompareHistory.result
+            expected = result
+        # The legacy result query is a judge-only filter; custom values can be
+        # arbitrary strings or objects and have no universal true/false meaning.
+        condition = (CompareHistory.rule_type == "judge") & (result_expr == expected)
+        stmt = stmt.where(condition)
+        count_stmt = count_stmt.where(condition)
 
     total = int(db.scalar(count_stmt) or 0)
     rows = db.scalars(
@@ -76,10 +90,11 @@ def to_api_dict(row: CompareHistory) -> dict[str, Any]:
         "id": str(row.id),
         "rule_id": row.rule_id,
         "rule_name": row.rule_name or "",
+        "rule_type": row.rule_type or "judge",
         "project_key": row.project_key,
         "project_name": row.project_name,
         "fields": row.fields or [],
-        "result": bool(row.result),
+        "result": row.result,
         "reason": row.reason or "",
         "time_ms": row.time_ms,
         "cost": row.cost or {},

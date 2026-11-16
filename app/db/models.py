@@ -1,9 +1,9 @@
 """三张表的 ORM 定义。
 
 字段增改约定
------------
-本项目不做启动时字段自动迁移（见 spec 决策 6），表结构变更需人工执行 SQL，
-并同步更新 ``docs/schema.sql``。
+------------
+受控的向前兼容字段迁移在 ``app.db.migrations`` 中登记，并于启动时检查和补齐；
+其他结构变更仍需同步更新迁移逻辑与 ``docs/schema.sql``。
 
 方言兼容
 --------
@@ -15,6 +15,7 @@ SQLite 只把 ``INTEGER PRIMARY KEY`` 当 rowid 别名，渲染成 BIGINT 就不
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -73,12 +74,14 @@ class Rule(Base):
     )
     name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
     description: Mapped[str] = mapped_column(String(512), nullable=False, default="")
+    rule_type: Mapped[str] = mapped_column(String(16), nullable=False, default="judge")
     field_defs: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
     require_field_name: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
     system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     prompt_template: Mapped[str] = mapped_column(Text, nullable=False)
+    output_schema: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
@@ -102,10 +105,11 @@ class CompareHistory(Base):
     id: Mapped[int] = mapped_column(_BIGINT_PK, primary_key=True, autoincrement=True)
     rule_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     rule_name: Mapped[str] = mapped_column(String(128), nullable=False, default="")
+    rule_type: Mapped[str] = mapped_column(String(16), nullable=False, default="judge")
     project_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     project_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
     fields: Mapped[list] = mapped_column(JSON, nullable=False)
-    result: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    result: Mapped[Any] = mapped_column(JSON, nullable=False)
     reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     time_ms: Mapped[int] = mapped_column(Integer, nullable=False)
     cost: Mapped[dict | None] = mapped_column(JSON, nullable=True)

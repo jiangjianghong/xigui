@@ -162,3 +162,38 @@ def test_export_then_import_roundtrip(client):
     _upload(client, text)
     assert client.get("/admin/rules/R001").json()["project"]["key"] == "zf"
     assert client.get("/admin/rules/R002").json()["project"] is None
+
+
+def test_custom_rule_schema_survives_import_export_roundtrip(client):
+    schema = {
+        "type": "object",
+        "properties": {"summary": {"type": "string"}},
+        "required": ["summary"],
+        "additionalProperties": False,
+    }
+    bundle = '''
+rules:
+  - id: RCUSTOM
+    rule_type: custom
+    prompt_template: "生成摘要: {field_a}"
+    output_schema:
+      type: object
+      properties:
+        summary:
+          type: string
+      required: [summary]
+      additionalProperties: false
+'''
+
+    assert _upload(client, bundle).status_code == 200
+    exported_text = client.get("/admin/export").text
+    exported = pyyaml.safe_load(exported_text)
+    rule = exported["rules"][0]
+    assert rule["rule_type"] == "custom"
+    assert rule["output_schema"] == schema
+
+    client.delete("/admin/rules/RCUSTOM")
+    assert _upload(client, exported_text).status_code == 200
+    restored = client.get("/admin/rules/RCUSTOM").json()
+    assert restored["rule_type"] == "custom"
+    assert restored["output_schema"] == schema

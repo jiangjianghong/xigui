@@ -124,6 +124,7 @@ def test_to_rule_cfg_shape(db):
         "id": "R001",
         "name": "总投资一致",
         "description": "d",
+        "rule_type": "judge",
         "require_field_name": False,
         "system_prompt": "sys",
         "prompt_template": "A:{field_a} B:{field_b}",

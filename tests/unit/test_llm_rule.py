@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from app.rules import llm_rule
+from app.rules.base import LLMOutputError
 from app.rules.registry import build_rule, should_require_field_name
 from app.core.llm_client import LLMTimeout
 
@@ -47,6 +48,73 @@ def test_llm_rule_mismatch(fake_chat):
     res = build_rule(_CFG).compare([("field_a", "A公司", None), ("field_b", "B集团", None)])
     assert res.match is False
     assert "明显" in res.reason
+
+
+def test_custom_plain_text_output_is_exposed_as_result(fake_chat, monkeypatch):
+    cfg = {"id": "T_CUSTOM", "rule_type": "custom", "prompt_template": "生成摘要:{field_a}"}
+    captured = {}
+
+    def _capture(messages, **kwargs):
+        captured["messages"] = messages
+        return '{"reason":"依据输入内容提取要点","value":"项目已完成初步设计"}', _USAGE
+
+    monkeypatch.setattr(llm_rule, "chat_json", _capture)
+    result = build_rule(cfg).compare([("field_a", "已完成初步设计审查", None)])
+
+    assert result.match == "项目已完成初步设计"
+    assert result.reason == "依据输入内容提取要点"
+    prompt = captured["messages"][-1]["content"]
+    assert prompt.index("reason") < prompt.index("value")
+    assert "不要输出完整的内部推理过程" in prompt
+
+
+def test_custom_structured_output_is_validated(fake_chat):
+    cfg = {
+        "id": "T_CUSTOM_JSON",
+        "rule_type": "custom",
+        "prompt_template": "提取分类:{field_a}",
+        "output_schema": {
+            "type": "object",
+            "properties": {"category": {"type": "string"}},
+            "required": ["category"],
+            "additionalProperties": False,
+        },
+    }
+    fake_chat["content"] = '{"reason":"文本提及供水","value":{"category":"供水工程"}}'
+
+    result = build_rule(cfg).compare([("field_a", "供水工程", None)])
+
+    assert result.match == {"category": "供水工程"}
+
+
+@pytest.mark.parametrize("content", [
+    "not json",
+    '{"reason":"缺少 value"}',
+    '{"reason":"多余字段","value":"x","match":true}',
+])
+def test_custom_invalid_envelope_fails(fake_chat, content):
+    fake_chat["content"] = content
+    cfg = {"id": "T_CUSTOM", "rule_type": "custom", "prompt_template": "生成:{field_a}"}
+
+    with pytest.raises(LLMOutputError):
+        build_rule(cfg).compare([("field_a", "输入", None)])
+
+
+def test_custom_schema_mismatch_fails(fake_chat):
+    fake_chat["content"] = '{"reason":"分类","value":{"category":3}}'
+    cfg = {
+        "id": "T_CUSTOM_JSON",
+        "rule_type": "custom",
+        "prompt_template": "分类:{field_a}",
+        "output_schema": {
+            "type": "object",
+            "properties": {"category": {"type": "string"}},
+            "required": ["category"],
+        },
+    }
+
+    with pytest.raises(LLMOutputError, match="JSON Schema"):
+        build_rule(cfg).compare([("field_a", "输入", None)])
 
 
 def test_invalid_json_fallback(fake_chat):

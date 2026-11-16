@@ -10,11 +10,15 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+class LLMOutputError(ValueError):
+    """The model response does not satisfy the configured output contract."""
+
+
 @dataclass
 class CompareResult:
     """单次规则比对的结果。"""
 
-    match: bool
+    match: Any
     reason: str
     usage: dict[str, int] | None = None
     """LLM token 用量。理论上恒有值;若 LLM 返回 usage 为空,会被上层兜底成全 0。"""

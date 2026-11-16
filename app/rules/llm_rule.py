@@ -12,8 +12,13 @@ import re
 from typing import Any
 
 from app.core.llm_client import chat_json
-from app.rules.base import CompareResult
+from app.rules.base import CompareResult, LLMOutputError
 from app.rules.field_keys import FALLBACK_TEMPLATE
+from app.rules.output_schema import (
+    OutputSchemaError,
+    build_output_instruction,
+    validate_output,
+)
 
 log = logging.getLogger("aicheck.rules.llm")
 
@@ -52,8 +57,10 @@ class LLMRule:
         self.cfg = cfg
         self.id: str = cfg["id"]
         self.name: str = cfg.get("name", "")
+        self.rule_type: str = cfg.get("rule_type") or "judge"
         self.system_prompt: str = cfg.get("system_prompt") or ""
         self.prompt_template: str = cfg.get("prompt_template") or FALLBACK_TEMPLATE
+        self.output_schema: dict[str, Any] | None = cfg.get("output_schema")
 
     def _render_user_prompt(self, fields: list[tuple[str, str, str | None]]) -> str:
         """渲染 prompt_template。
@@ -76,7 +83,10 @@ class LLMRule:
 
         ``fields`` 为 ``[(key, value, name), ...]``,与请求里的字段键一一对应。
         """
-        user_prompt = self._render_user_prompt(fields)
+        user_prompt = self._render_user_prompt(fields).rstrip()
+        user_prompt += "\n\n" + build_output_instruction(
+            self.rule_type, self.output_schema
+        )
         messages: list[dict[str, Any]] = []
         if self.system_prompt:
             messages.append({"role": "system", "content": self.system_prompt})
@@ -84,6 +94,36 @@ class LLMRule:
 
         # LLMTimeout / LLMUpstreamError 直接向上抛,由 API 层映射 504/502
         content, usage = chat_json(messages)
+
+        if self.rule_type == "custom":
+            try:
+                parsed = json.loads(content)
+            except (json.JSONDecodeError, TypeError) as e:
+                raise LLMOutputError("custom 输出不是合法 JSON") from e
+            if not isinstance(parsed, dict):
+                raise LLMOutputError("custom 输出必须是 JSON 对象")
+            if set(parsed) != {"reason", "value"}:
+                raise LLMOutputError("custom 输出只能包含 reason 和 value")
+            reason = parsed.get("reason")
+            if not isinstance(reason, str) or not reason.strip():
+                raise LLMOutputError("custom 输出缺少非空字符串 reason")
+            if "value" not in parsed:
+                raise LLMOutputError("custom 输出缺少 value")
+            result = parsed["value"]
+            if self.output_schema is None:
+                if not isinstance(result, str):
+                    raise LLMOutputError("纯文本 custom 输出的 value 必须是字符串")
+            else:
+                try:
+                    validate_output(result, self.output_schema)
+                except OutputSchemaError as e:
+                    raise LLMOutputError(f"custom 输出不符合 JSON Schema: {e}") from e
+            return CompareResult(
+                match=result,
+                reason=reason.strip(),
+                usage=usage,
+                extra={"raw_content": content[:500]},
+            )
 
         parsed = _parse_llm_json(content)
         if parsed is None or "match" not in parsed:
@@ -98,7 +138,14 @@ class LLMRule:
                 extra={"raw_content": content[:500]},
             )
 
-        match = bool(parsed.get("match"))
+        match = parsed.get("match")
+        if type(match) is not bool:
+            return CompareResult(
+                match=False,
+                reason="LLM 输出的 match 必须是 JSON 布尔值",
+                usage=usage,
+                extra={"raw_content": content[:500]},
+            )
         reason = str(parsed.get("reason") or ("基本一致" if match else "不一致"))
         return CompareResult(
             match=match,

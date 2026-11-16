@@ -20,10 +20,12 @@ from app.db.models import Project, Rule
 _FIELDS = (
     "name",
     "description",
+    "rule_type",
     "field_defs",
     "require_field_name",
     "system_prompt",
     "prompt_template",
+    "output_schema",
 )
 
 
@@ -70,7 +72,14 @@ def _apply(rule: Rule, data: dict[str, Any]) -> None:
             val = bool(val)
         if key == "field_defs":
             val = list(val) if val else None
+        if key == "rule_type":
+            val = val or "judge"
         setattr(rule, key, val)
+    effective_type = data.get("rule_type", rule.rule_type or "judge")
+    if effective_type == "judge" or (
+        effective_type == "custom" and "output_schema" not in data
+    ):
+        rule.output_schema = None
 
 
 def create(db: Session, data: dict[str, Any], *, project_id: int | None = None) -> Rule:
@@ -131,12 +140,15 @@ def to_rule_cfg(rule: Rule) -> dict[str, Any]:
         "id": rule.rule_id,
         "name": rule.name or "",
         "description": rule.description or "",
+        "rule_type": rule.rule_type or "judge",
         "require_field_name": bool(rule.require_field_name),
         "system_prompt": rule.system_prompt or "",
         "prompt_template": rule.prompt_template,
     }
     if rule.field_defs:
         cfg["field_defs"] = list(rule.field_defs)
+    if rule.output_schema:
+        cfg["output_schema"] = rule.output_schema
     return cfg
 
 
