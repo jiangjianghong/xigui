@@ -101,7 +101,7 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 6549 --workers 1 --no-proxy-he
 
 直连时忽略客户端提交的 `X-Forwarded-For`。仅当网络直连对端属于 `trusted_proxies`，才从 XFF 最右侧向外解析，并停在第一个不可信节点。无效链拒绝用作白名单匹配。Nginx 等代理应保留真实 `Host`，设置 `X-Forwarded-For` 和 `X-Forwarded-Proto`，只将实际代理的地址/网段列为可信。不要信任 `0.0.0.0/0` 等任意来源。
 
-HTTPS 部署将 `secure_cookie` 设为 `true`。当前不开放跨域 CORS，浏览器跨站请求被拒绝；使用管理员 Cookie 的登录及修改请求需要 `X-Requested-With: XMLHttpRequest`，此请求头不是凭据。后台会自动附加；脚本模拟管理员 Cookie 或用接口文档执行修改时也要携带。有效 Key 和白名单不依赖 Cookie 的 CSRF 请求头，仍受同源校验约束。
+HTTPS 部署将 `secure_cookie` 设为 `true`。管理员 Cookie 请求仍执行同源校验，登录及修改请求还需要 `X-Requested-With: XMLHttpRequest`，此请求头不是凭据，后台会自动附加；脚本模拟管理员 Cookie 或用接口文档执行修改时也要携带。有效 API Key 和 IP 白名单是独立的高权限凭据，可直接访问全部接口，不受浏览器同源校验和 Cookie CSRF 请求头限制。
 
 YAML 需要对服务进程可写，且其**父目录**也需可写；Docker 挂载整个 `config/` 目录以支持原子替换，避免只挂载单个 YAML 文件。写入使用独立的 `config.yaml.lock` 文件协调服务与密码重置命令，避免并发保存恢复旧凭据；运行期间不要删除锁文件。编辑器手工保存不会遵循该锁，应避开后台保存操作。多个服务实例仍不受支持，因为会话和失败计数并未共享。
 

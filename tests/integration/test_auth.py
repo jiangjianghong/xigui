@@ -241,9 +241,12 @@ def test_program_authorization_survives_session_expiry(program):
     assert program.delete("/admin/history").status_code == 200
 
 
-def test_program_cannot_make_cross_site_requests(program):
-    assert program.delete("/admin/history", headers={"Origin": "https://evil.example"}).status_code == 403
-    assert program.delete("/admin/history", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 403
+@pytest.mark.parametrize("headers", [
+    {"Origin": "https://evil.example"},
+    {"Sec-Fetch-Site": "cross-site"},
+])
+def test_program_credentials_bypass_same_origin(program, headers):
+    assert program.delete("/admin/history", headers=headers).status_code == 200
 
 
 def test_expired_key_denied(client):

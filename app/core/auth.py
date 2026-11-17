@@ -240,7 +240,15 @@ class AuthMiddleware:
             await reject(503, "代理配置冲突，请使用 --no-proxy-headers 启动服务")
             return
         trusted = cfg.access_control.trusted_proxies
-        if not same_origin(request, trusted):
+        state = scope.setdefault("state", {})
+        state["client_ip"] = client_ip(request, trusted)
+        key_id = api_key_identity(request.headers.get("authorization"), cfg.access_control.api_keys)
+        allowed_ip = in_networks(state["client_ip"], (item.network for item in cfg.access_control.ip_allowlist if item.enabled))
+
+        # API Keys and IP allowlist entries are independent credentials with
+        # full programmatic access. Cookie-authenticated browser requests keep
+        # the same-origin check as their CSRF protection.
+        if not (key_id or allowed_ip) and not same_origin(request, trusted):
             await reject(403, "不允许跨站请求")
             return
         path = request.url.path
@@ -252,13 +260,9 @@ class AuthMiddleware:
                 await reject(403, "登录请求缺少安全请求头")
                 return
             public = True
-        state = scope.setdefault("state", {})
-        state["client_ip"] = client_ip(request, trusted)
-        key_id = api_key_identity(request.headers.get("authorization"), cfg.access_control.api_keys)
-        allowed_ip = in_networks(state["client_ip"], (item.network for item in cfg.access_control.ip_allowlist if item.enabled))
         # Independent credentials authorize every route, even when a browser
         # also carries a valid or expired session cookie. XHR is a CSRF guard
-        # for cookie-only requests, not an additional credential for programs.
+        # for cookie-only requests; API Keys and IP allowlist entries bypass it.
         state["auth_identity"] = (f"key:{key_id}" if key_id else
                                   f"ip:{state['client_ip']}" if allowed_ip else
                                   "admin" if session else None)
