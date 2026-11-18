@@ -23,6 +23,19 @@ from openai import OpenAI
 from app.core.config import build_extra_body, get_config
 
 log = logging.getLogger("aicheck.llm")
+_CHAT_COMPLETION_PARAMS = {
+    "frequency_penalty", "function_call", "functions", "logit_bias", "logprobs",
+    "n", "parallel_tool_calls", "presence_penalty", "seed", "service_tier",
+    "stop", "tool_choice", "tools", "top_logprobs", "top_p", "user",
+}
+
+
+def _merge_params(target: dict[str, Any], source: dict[str, Any]) -> None:
+    for key, value in source.items():
+        if isinstance(value, dict) and isinstance(target.get(key), dict):
+            _merge_params(target[key], value)
+        else:
+            target[key] = value
 
 
 class LLMTimeout(Exception):
@@ -38,6 +51,7 @@ def _make_client(llm_cfg: dict[str, Any]) -> OpenAI:
         api_key=llm_cfg["api_key"],
         base_url=llm_cfg["api_base"],
         timeout=llm_cfg.get("timeout", 300),
+        max_retries=llm_cfg.get("max_retries", 0),
     )
 
 
@@ -78,6 +92,18 @@ def chat_json(messages: list[dict[str, Any]], *, use_json_mode: bool | None = No
         "temperature": cfg.get("temperature", 0.1),
         "extra_body": build_extra_body(cfg),
     }
+    if cfg.get("top_p") is not None:
+        create_kwargs["top_p"] = cfg["top_p"]
+    custom_params = cfg.get("extra_params") or {}
+    for key, value in custom_params.items():
+        if key == "extra_body":
+            if not isinstance(value, dict):
+                raise ValueError("llm.extra_params.extra_body 必须是 JSON 对象")
+            _merge_params(create_kwargs["extra_body"], value)
+        elif key in _CHAT_COMPLETION_PARAMS:
+            create_kwargs[key] = value
+        else:
+            create_kwargs["extra_body"][key] = value
     enable_json = cfg.get("use_json_mode", True) if use_json_mode is None else use_json_mode
     if enable_json:
         create_kwargs["response_format"] = {"type": "json_object"}

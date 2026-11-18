@@ -9,6 +9,13 @@ llm:
   api_key: replace-me
   model: your-model
   enable_thinking: false
+  max_tokens: 1024
+  temperature: 0.1
+  top_p: null
+  timeout: 300
+  use_json_mode: true
+  max_retries: 0
+  extra_params: {}
 mysql:
   host: 127.0.0.1
   port: 3306

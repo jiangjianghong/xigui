@@ -49,12 +49,13 @@ function escape(s) {
 // ---------------------------------------------------------------------------
 
 function switchTab(tab) {
-    for (const t of ['rules', 'playground', 'history', 'access']) {
+    for (const t of ['rules', 'playground', 'history', 'access', 'model']) {
         document.getElementById(`tab-${t}`).classList.toggle('active', t === tab);
         document.getElementById(`page-${t}`).classList.toggle('hidden', t !== tab);
     }
     if (tab === 'playground') refreshPgRules();
     if (tab === 'access') loadAccess();
+    if (tab === 'model') loadModelConfig();
     if (tab === 'history') {
         refreshHistoryFilter();
         loadHistory();

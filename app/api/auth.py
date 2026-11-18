@@ -8,8 +8,8 @@ from filelock import Timeout
 
 from app.core.access_control import mutate_access_control, read_access_control
 from app.core.auth import COOKIE_NAME, LoginError, admin_auth
-from app.core.config import ConfigConflictError
-from app.schemas.security import AdminPassword, StrictModel
+from app.core.config import ConfigConflictError, config_snapshot, update_config
+from app.schemas.security import AdminPassword, LLMConfig, StrictModel
 
 router = APIRouter(tags=["auth"])
 
@@ -24,6 +24,56 @@ class AccessMutation(StrictModel):
     operation: Literal["create", "update", "rotate", "delete"]
     id: str | None = None
     values: dict = Field(default_factory=dict)
+
+
+class ModelConfigMutation(StrictModel):
+    version: str = Field(pattern=r"^[a-f0-9]{64}$")
+    config: dict
+    api_key_action: str = Field(pattern=r"^(keep|replace|clear)$")
+    api_key: str | None = Field(default=None, max_length=4096)
+
+
+def _public_model_config(document: dict, version: str) -> dict:
+    cfg = LLMConfig.model_validate(document.get("llm") or {})
+    values = cfg.model_dump(exclude={"api_key"})
+    values["api_key_configured"] = bool(cfg.api_key)
+    return {"version": version, "config": values}
+
+
+@router.get("/admin/model-config")
+def read_model_config():
+    return _public_model_config(*config_snapshot())
+
+
+@router.put("/admin/model-config")
+def write_model_config(body: ModelConfigMutation):
+    try:
+        current, _ = config_snapshot()
+        current_key = (current.get("llm") or {}).get("api_key", "")
+        values = dict(body.config)
+        if body.api_key_action == "replace":
+            if not body.api_key:
+                raise HTTPException(422, "替换 API Key 时必须提供密钥")
+            values["api_key"] = body.api_key
+        elif body.api_key_action == "keep":
+            values["api_key"] = current_key
+        else:
+            values["api_key"] = ""
+        parsed = LLMConfig.model_validate(values)
+
+        def mutate(document):
+            document["llm"] = parsed.model_dump()
+
+        document, version = update_config(mutate, version=body.version)
+        return _public_model_config(document, version)
+    except ConfigConflictError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except HTTPException:
+        raise
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(422, "模型配置格式无效，请检查字段和附加参数 JSON") from exc
+    except (OSError, Timeout) as exc:
+        raise HTTPException(503, "暂时无法保存配置，请检查配置目录写入权限") from exc
 
 
 @router.post("/auth/login")

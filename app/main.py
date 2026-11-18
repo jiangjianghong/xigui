@@ -100,7 +100,7 @@ async def _validation_error(request: Request, exc: RequestValidationError):
         for error in exc.errors()
     ):
         return JSONResponse({"detail": PASSWORD_LENGTH_MESSAGE}, status_code=422)
-    if request.url.path.startswith(("/auth/", "/admin/access-control")):
+    if request.url.path.startswith(("/auth/", "/admin/access-control", "/admin/model-config")):
         return JSONResponse({"detail": "请求格式不正确，请检查字段和长度"}, status_code=422)
     return await request_validation_exception_handler(request, exc)
 

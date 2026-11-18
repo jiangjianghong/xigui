@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from argon2 import extract_parameters
 from argon2.low_level import Type
@@ -98,6 +98,37 @@ class SecurityConfig(BaseModel):
     access_control: AccessControl = Field(default_factory=AccessControl)
 
 
+class LLMConfig(StrictModel):
+    backend: Annotated[str, Field(min_length=1, max_length=40)] = "vllm"
+    api_base: Annotated[str, Field(min_length=1, max_length=2048)] = "http://127.0.0.1:8000/v1"
+    api_key: Annotated[str, Field(max_length=4096)] = ""
+    model: Annotated[str, Field(min_length=1, max_length=300)] = "your-model"
+    max_tokens: Annotated[int, Field(strict=True, ge=1, le=200000)] = 1024
+    temperature: Annotated[float, Field(ge=0, le=2)] = 0.1
+    top_p: Annotated[float, Field(ge=0, le=1)] | None = None
+    timeout: Annotated[int, Field(strict=True, ge=1, le=3600)] = 300
+    enable_thinking: StrictBool = False
+    use_json_mode: StrictBool = True
+    max_retries: Annotated[int, Field(strict=True, ge=0, le=10)] = 0
+    extra_params: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("extra_params")
+    @classmethod
+    def safe_extra_params(cls, values):
+        reserved = {"model", "messages", "stream", "response_format"}
+        collisions = reserved.intersection(values)
+        if collisions:
+            raise ValueError(f"附加参数不能覆盖系统字段: {', '.join(sorted(collisions))}")
+        extra_body = values.get("extra_body")
+        if extra_body is not None:
+            if not isinstance(extra_body, dict):
+                raise ValueError("附加参数 extra_body 必须是 JSON 对象")
+            nested_collisions = reserved.intersection(extra_body)
+            if nested_collisions:
+                raise ValueError("附加参数 extra_body 不能包含系统字段")
+        return values
+
+
 def validate_document(document: dict) -> SecurityConfig:
     """Validate the entire YAML mapping, including every persisted auth entry."""
     if not isinstance(document, dict):
@@ -105,6 +136,11 @@ def validate_document(document: dict) -> SecurityConfig:
     for key in ("app", "llm", "mysql"):
         if key in document and not isinstance(document[key], dict):
             raise ValueError(f"{key} 必须是映射")
+    if "llm" in document:
+        try:
+            LLMConfig.model_validate(document["llm"])
+        except Exception as exc:
+            raise ValueError("LLM 模型配置无效") from exc
     if "rules_config_path" in document and not isinstance(document["rules_config_path"], str):
         raise ValueError("rules_config_path 必须是路径字符串")
     return SecurityConfig.model_validate(document)

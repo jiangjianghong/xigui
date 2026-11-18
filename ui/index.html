@@ -442,6 +442,7 @@
                     <i class="ri-history-line mr-1"></i> 请求历史
                 </button>
                 <button id="tab-access" class="tab" onclick="switchTab('access')">接口访问控制</button>
+                <button id="tab-model" class="tab" onclick="switchTab('model')">模型配置</button>
                 <span id="admin-account" class="text-sm"></span>
                 <button id="logout-admin" class="btn-outline" onclick="logoutAdmin()">退出</button>
                 <button class="btn-outline" onclick="reloadAll()" title="重新拉取数据">
@@ -654,6 +655,32 @@
                 </form>
                 <div id="access-ips" class="access-list" aria-live="polite"><p>正在加载白名单…</p></div>
             </section>
+        </section>
+        <section id="page-model" class="hidden access-panel">
+            <div class="access-heading"><div><h2>全局模型配置</h2><p class="access-muted">保存后立即用于新发起的模型请求，无需重启。</p></div>
+                <button type="button" onclick="loadModelConfig()">刷新配置</button></div>
+            <form id="model-config-form" class="model-config-form">
+                <div class="model-config-grid">
+                    <label>服务商 / 后端<input id="model-backend" maxlength="40" required></label>
+                    <label>API 地址<input id="model-api-base" type="url" maxlength="2048" required></label>
+                    <label>模型名称<input id="model-name" maxlength="300" required></label>
+                    <label>API Key<input id="model-api-key" type="password" maxlength="4096" autocomplete="new-password" placeholder="已配置时留空表示不修改"></label>
+                    <label>请求超时（秒）<input id="model-timeout" type="number" min="1" max="3600" required></label>
+                    <label>最大输出 Token<input id="model-max-tokens" type="number" min="1" max="200000" required></label>
+                    <label>Temperature<input id="model-temperature" type="number" min="0" max="2" step="0.01" required></label>
+                    <label>Top P<input id="model-top-p" type="number" min="0" max="1" step="0.01" placeholder="留空使用服务默认值"></label>
+                    <label>最大重试次数<input id="model-max-retries" type="number" min="0" max="10" required></label>
+                </div>
+                <div class="model-config-toggles">
+                    <label><input id="model-thinking" type="checkbox"> 启用思考模式</label>
+                    <label><input id="model-json-mode" type="checkbox"> 请求 JSON 输出模式</label>
+                    <label><input id="model-clear-key" type="checkbox"> 清除已保存的 API Key</label>
+                </div>
+                <label>附加参数（JSON 对象）<textarea id="model-extra-params" rows="8" spellcheck="false" class="input" placeholder='{"top_p": 0.8, "enable_thinking": false}'></textarea></label>
+                <p class="access-muted">附加参数会合并到 Chat Completions 请求；可填写供应商自定义参数。不能覆盖 model、messages、stream、response_format。</p>
+                <p id="model-config-error" class="auth-error" role="alert"></p>
+                <div class="model-config-footer"><span id="model-key-status" class="access-muted"></span><button id="model-config-save" class="auth-primary" type="submit">保存模型配置</button></div>
+            </form>
         </section>
     </main>
     <dialog id="access-secret" class="auth-dialog auth-ui" aria-labelledby="secret-title">
@@ -872,6 +899,7 @@
     <script src="app.js"></script>
     <script src="projects.js"></script>
     <script src="access.js"></script>
+    <script src="model-config.js"></script>
     <script src="bio-select.js"></script>
 </body>
 </html>

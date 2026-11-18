@@ -33,10 +33,19 @@
 .access-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .access-panel .access-danger { color: #9e3028; }
 .access-notice { background: #e8efe6; padding: 14px 18px; border-radius: 8px; }
+.model-config-form { display: grid; gap: 18px; margin-top: 24px; }
+.model-config-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.model-config-form textarea { width: 100%; margin-top: 6px; }
+.model-config-toggles { display: flex; flex-wrap: wrap; gap: 20px; }
+.model-config-toggles label { display: flex; align-items: center; gap: 8px; }
+.model-config-toggles input { width: 18px; min-height: 18px; height: 18px; }
+.model-config-footer { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
 .auth-footer { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
 .access-panel [hidden], .auth-ui [hidden] { display: none !important; }
 @media (max-width: 760px) {
     .access-form, .access-ip-form { grid-template-columns: 1fr; }
+    .model-config-grid { grid-template-columns: 1fr; }
+    .model-config-footer { align-items: stretch; flex-direction: column; }
     .access-row { grid-template-columns: 1fr; gap: 8px; }
     .access-section { padding: 20px; }
     .auth-card { padding: 28px 24px; }
