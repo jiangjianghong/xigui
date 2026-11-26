@@ -245,21 +245,25 @@ class AuthMiddleware:
         key_id = api_key_identity(request.headers.get("authorization"), cfg.access_control.api_keys)
         allowed_ip = in_networks(state["client_ip"], (item.network for item in cfg.access_control.ip_allowlist if item.enabled))
 
-        # API Keys and IP allowlist entries are independent credentials with
-        # full programmatic access. Cookie-authenticated browser requests keep
-        # the same-origin check as their CSRF protection.
-        if not (key_id or allowed_ip) and not same_origin(request, trusted):
-            await reject(403, "不允许跨站请求")
-            return
         path = request.url.path
         canonical = path.rstrip("/") or "/"
         method = request.method
+        login_entry = method in {"GET", "HEAD"} and canonical in {"/", "/ui"}
         public = method in {"GET", "HEAD"} and canonical in PUBLIC_FILES | {"/health", "/auth/session"}
         if canonical == "/auth/login" and method == "POST":
             if request.headers.get("x-requested-with") != "XMLHttpRequest":
                 await reject(403, "登录请求缺少安全请求头")
                 return
             public = True
+        # Public login resources and password submission must work before any
+        # session, API Key or IP allowlist authorization, including when a
+        # reverse proxy changes Host or the scheme. Login still requires XHR.
+        # Entry-page navigation may reach the login redirect but still goes
+        # through authorization below. Other protected cookie requests retain
+        # the same-origin check as CSRF protection.
+        if not (public or login_entry or key_id or allowed_ip) and not same_origin(request, trusted):
+            await reject(403, "不允许跨站请求")
+            return
         # Independent credentials authorize every route, even when a browser
         # also carries a valid or expired session cookie. XHR is a CSRF guard
         # for cookie-only requests; API Keys and IP allowlist entries bypass it.

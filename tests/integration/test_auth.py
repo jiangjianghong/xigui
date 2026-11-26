@@ -115,31 +115,83 @@ def test_credentials_change_invalidates_all_sessions(client):
     assert client.get("/admin/rules").status_code == 401
 
 
-def test_lockout_and_expiry_are_per_source_ip(anonymous_client, monkeypatch):
+@pytest.mark.parametrize("headers", [
+    XHR,
+    {**XHR, "Host": "10.5.0.103:5033", "Origin": "http://59.203.14.205:8133"},
+])
+def test_lockout_and_expiry_are_per_source_ip(anonymous_client, monkeypatch, headers):
     clock = [1000.0]
     monkeypatch.setattr(auth.admin_auth, "_clock", lambda: clock[0])
     for attempt in range(5):
-        response = anonymous_client.post("/auth/login", json={**LOGIN, "password": "wrong123"}, headers=XHR)
+        response = anonymous_client.post("/auth/login", json={**LOGIN, "password": "wrong123"}, headers=headers)
         assert response.status_code == (401 if attempt < 4 else 429)
-    blocked = anonymous_client.post("/auth/login", json=LOGIN, headers=XHR)
+    blocked = anonymous_client.post("/auth/login", json=LOGIN, headers=headers)
     assert blocked.status_code == 429 and blocked.headers["retry-after"] == "300"
     other = TestClient(app, client=("192.0.2.5", 5000))
     assert other.post("/auth/login", json=LOGIN, headers=XHR).status_code == 200
-    assert anonymous_client.post("/auth/login", json=LOGIN, headers=XHR).status_code == 429
+    assert anonymous_client.post("/auth/login", json=LOGIN, headers=headers).status_code == 429
     other.close()
     clock[0] += 301
-    assert anonymous_client.post("/auth/login", json=LOGIN, headers=XHR).status_code == 200
+    assert anonymous_client.post("/auth/login", json=LOGIN, headers=headers).status_code == 200
 
 
-@pytest.mark.parametrize("headers", [{}, {**XHR, "Origin": "https://evil.example"}, {**XHR, "Sec-Fetch-Site": "cross-site"}])
-def test_login_csrf(anonymous_client, headers):
-    assert anonymous_client.post("/auth/login", json=LOGIN, headers=headers).status_code == 403
+@pytest.mark.parametrize("headers", [{}, {"Origin": "https://other.example"}, {"Sec-Fetch-Site": "cross-site"}])
+def test_login_requires_xhr_header(anonymous_client, headers):
+    response = anonymous_client.post("/auth/login", json=LOGIN, headers=headers)
+    assert response.status_code == 403
+    assert response.json()["detail"] == "登录请求缺少安全请求头"
+
+
+@pytest.mark.parametrize("headers", [
+    {"Host": "10.5.0.103:5033", "Origin": "http://59.203.14.205:8133"},
+    {"Origin": "https://testserver", "X-Forwarded-Proto": "https"},
+    {"Origin": "https://other.example", "Sec-Fetch-Site": "cross-site"},
+])
+@pytest.mark.parametrize("valid_password", [True, False])
+def test_login_uses_password_without_origin_key_or_ip_allowlist(anonymous_client, headers, valid_password):
+    assert anonymous_client.get("/auth/session").json() == {"authenticated": False, "authorized": False}
+    body = LOGIN if valid_password else {**LOGIN, "password": "wrong123"}
+    response = anonymous_client.post("/auth/login", json=body, headers={**XHR, **headers})
+    if valid_password:
+        assert response.status_code == 200, response.text
+        assert response.json()["authenticated"] is True
+        assert auth.admin_auth.validate(response.cookies.get(auth.COOKIE_NAME)) is not None
+    else:
+        assert response.status_code == 401, response.text
+        assert response.json()["detail"] == "用户名或密码错误"
+        assert "set-cookie" not in response.headers
+
+
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/ui/login"), ("HEAD", "/ui/login"),
+    ("GET", "/ui/auth.js"), ("HEAD", "/ui/auth.js"),
+    ("GET", "/ui/auth.css"), ("HEAD", "/ui/auth.css"),
+    ("GET", "/auth/session"), ("GET", "/health"),
+])
+def test_public_login_surface_does_not_require_same_origin(anonymous_client, method, path):
+    response = anonymous_client.request(method, path, headers={
+        "Host": "10.5.0.103:5033",
+        "Origin": "http://59.203.14.205:8133",
+        "Sec-Fetch-Site": "cross-site",
+    })
+    assert response.status_code == 200, response.text
+
+
+@pytest.mark.parametrize("method", ["GET", "HEAD"])
+@pytest.mark.parametrize("path", ["/", "/ui", "/ui/"])
+def test_cross_site_entry_navigation_still_requires_login(anonymous_client, method, path):
+    response = anonymous_client.request(method, path, follow_redirects=False, headers={
+        "Origin": "https://other.example", "Sec-Fetch-Site": "cross-site",
+    })
+    assert response.status_code == 303
+    assert response.headers["location"] == "/ui/login"
 
 
 def test_admin_mutation_requires_xhr_and_same_origin(client):
     client.headers.pop("X-Requested-With")
     assert client.delete("/admin/history").status_code == 403
     assert client.delete("/admin/history", headers={**XHR, "Origin": "http://evil.test"}).status_code == 403
+    assert client.delete("/admin/history", headers={**XHR, "Sec-Fetch-Site": "cross-site"}).status_code == 403
     assert client.delete("/admin/history", headers={**XHR, "Origin": "http://testserver"}).status_code == 200
 
 
@@ -303,10 +355,12 @@ def test_proxy_proto_and_uvicorn_rewrite(client):
     program = TestClient(app, client=("10.0.0.1", 5000))
     headers = {**XHR, "Origin": "https://testserver", "X-Forwarded-Proto": "https"}
     assert program.post("/auth/login", headers=headers, json=LOGIN).status_code == 200
+    assert program.delete("/admin/history", headers=headers).status_code == 200
     program.close()
     program = TestClient(app, client=("192.0.2.4", 0))
     assert program.get("/health", headers={"X-Forwarded-For": "192.0.2.4"}).status_code == 503
-    assert program.post("/auth/login", headers=headers, json=LOGIN).status_code == 403
+    assert program.post("/auth/login", headers=headers, json=LOGIN).status_code == 200
+    assert program.delete("/admin/history", headers=headers).status_code == 403
     program.close()
 
 

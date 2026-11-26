@@ -19,9 +19,9 @@ uv run python scripts/set_admin_password.py --generate-to data/admin-initial-pas
 
 妥善保存密码后删除该文件。该文件在已忽略的 `data/` 中，不应提交或对外共享。重置密码使用同一个命令，后续请求中原会话立即失效。若配置中已有符合 6–12 字符要求的 `settings.password`，首次启动会迁移成 Argon2id 哈希并移除明文，旧密码继续有效；已有哈希时以哈希为准。旧密码长度超出范围时，请先用上述命令重置。没有密码时启动失败，绝不会退回免密模式。
 
-浏览器打开 `/`，未登录会跳转到 `/ui/login`。`POST /auth/login` 接受 `{"username":"admin","password":"..."}`，请求需带 `X-Requested-With: XMLHttpRequest`。登录成功设置 `xigui_session` Cookie（本项目独立命名，避免覆盖另一个项目的 `xijuan_session`）。Cookie 为 `HttpOnly; SameSite=Strict; Path=/`，`secure_cookie: true` 时还带 `Secure`。
+浏览器打开 `/`，未登录会跳转到 `/ui/login`。`POST /auth/login` 接受 `{"username":"admin","password":"..."}`，请求需带 `X-Requested-With: XMLHttpRequest`。登录页及其专用 CSS/JS、会话查询、健康检查和登录提交不执行同源校验；即使 Key、IP 白名单和可信代理均未配置，或反向代理导致 `Origin` 与后端 `Host` / 协议不一致，仍可提交账号密码。登录仍校验密码和失败限流，前端自动附加安全请求头。登录成功设置 `xigui_session` Cookie（本项目独立命名，避免覆盖另一个项目的 `xijuan_session`）。Cookie 为 `HttpOnly; SameSite=Strict; Path=/`，`secure_cookie: true` 时还带 `Secure`。
 
-登录地址不带文件后缀，端口沿用 `app.port` 配置；例如端口配置为 `5019` 时是 `http://127.0.0.1:5019/ui/login`。旧的 `/ui/login.html` 和带尾斜杠的 `/ui/login/` 会跳转至 `/ui/login`。登录页、重新登录弹窗和服务端统一校验 6–12 字符，超出范围返回 `422`。
+首次访问 `/`、`/ui`、`/ui/` 的 GET/HEAD 页面导航也不执行同源校验，未登录仍跳转到登录页，不会开放后台权限。登录地址不带文件后缀，端口沿用 `app.port` 配置；例如端口配置为 `5019` 时是 `http://127.0.0.1:5019/ui/login`。旧的 `/ui/login.html` 和带尾斜杠的 `/ui/login/` 会跳转至 `/ui/login`。登录页、重新登录弹窗和服务端统一校验 6–12 字符，超出范围返回 `422`。
 
 `GET /auth/session` 返回 `authenticated` 和 `authorized`。登录会话还会返回用户名和 `expires_at`；通过 API Key 或白名单时返回对应身份，不返回会话到期时间。`POST /auth/logout` 只使当前登录会话失效并清除 Cookie，不撤销 API Key 或白名单权限。会话默认固定 30 分钟，不因操作续期；到期、退出、重启、加载新的管理员账号或密码哈希时失效。同一来源连续失败 5 次锁定 5 分钟，锁定响应为 `429` 并带 `Retry-After`。所有鉴权方式都失效后，后台会弹出重新登录窗口，保留当前页面的表单；重新登录后需再次提交，不会自动重放修改请求。
 
@@ -101,7 +101,7 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 6549 --workers 1 --no-proxy-he
 
 直连时忽略客户端提交的 `X-Forwarded-For`。仅当网络直连对端属于 `trusted_proxies`，才从 XFF 最右侧向外解析，并停在第一个不可信节点。无效链拒绝用作白名单匹配。Nginx 等代理应保留真实 `Host`，设置 `X-Forwarded-For` 和 `X-Forwarded-Proto`，只将实际代理的地址/网段列为可信。不要信任 `0.0.0.0/0` 等任意来源。
 
-HTTPS 部署将 `secure_cookie` 设为 `true`。管理员 Cookie 请求仍执行同源校验，登录及修改请求还需要 `X-Requested-With: XMLHttpRequest`，此请求头不是凭据，后台会自动附加；脚本模拟管理员 Cookie 或用接口文档执行修改时也要携带。有效 API Key 和 IP 白名单是独立的高权限凭据，可直接访问全部接口，不受浏览器同源校验和 Cookie CSRF 请求头限制。
+HTTPS 部署将 `secure_cookie` 设为 `true`。登录提交不执行同源校验，但仍需要 `X-Requested-With: XMLHttpRequest`；登录后的受保护管理员 Cookie 请求继续执行同源校验，修改请求还需该安全请求头。因此登录成功不代表代理头配置正确，后续 Cookie 管理操作仍应保留真实 `Host` 和协议。此请求头不是凭据，后台会自动附加；脚本模拟管理员 Cookie 或用接口文档执行修改时也要携带。有效 API Key 和 IP 白名单是独立的高权限凭据，可直接访问全部接口，不受浏览器同源校验和 Cookie CSRF 请求头限制。本次调整不新增浏览器 CORS 响应头。
 
 YAML 需要对服务进程可写，且其**父目录**也需可写；Docker 挂载整个 `config/` 目录以支持原子替换，避免只挂载单个 YAML 文件。写入使用独立的 `config.yaml.lock` 文件协调服务与密码重置命令，避免并发保存恢复旧凭据；运行期间不要删除锁文件。编辑器手工保存不会遵循该锁，应避开后台保存操作。多个服务实例仍不受支持，因为会话和失败计数并未共享。
 
