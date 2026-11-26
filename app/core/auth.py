@@ -10,7 +10,6 @@ import threading
 import time
 import yaml
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerificationError, InvalidHashError
@@ -166,29 +165,6 @@ def client_ip(request: Request, trusted: list[str]) -> str:
     return peer
 
 
-def same_origin(request: Request, trusted: list[str]) -> bool:
-    if request.headers.get("sec-fetch-site") == "cross-site":
-        return False
-    origin = request.headers.get("origin")
-    if origin is None:
-        return True
-    scheme = request.url.scheme
-    if request.client and in_networks(request.client.host, trusted):
-        proto = request.headers.get("x-forwarded-proto")
-        if proto in {"http", "https"}:
-            scheme = proto
-    try:
-        supplied = urlsplit(origin)
-        expected = urlsplit(f"{scheme}://{request.headers.get('host', '')}")
-        def endpoint(url):
-            return (url.scheme.lower(), url.hostname, url.port or (443 if url.scheme == "https" else 80))
-        return (not supplied.username and not supplied.password and not supplied.query
-                and not supplied.fragment and supplied.path in {"", "/"}
-                and endpoint(supplied) == endpoint(expected))
-    except ValueError:
-        return False
-
-
 def api_key_identity(header: str | None, keys) -> str | None:
     if not header:
         return None
@@ -248,25 +224,17 @@ class AuthMiddleware:
         path = request.url.path
         canonical = path.rstrip("/") or "/"
         method = request.method
-        login_entry = method in {"GET", "HEAD"} and canonical in {"/", "/ui"}
         public = method in {"GET", "HEAD"} and canonical in PUBLIC_FILES | {"/health", "/auth/session"}
         if canonical == "/auth/login" and method == "POST":
             if request.headers.get("x-requested-with") != "XMLHttpRequest":
                 await reject(403, "登录请求缺少安全请求头")
                 return
             public = True
-        # Public login resources and password submission must work before any
-        # session, API Key or IP allowlist authorization, including when a
-        # reverse proxy changes Host or the scheme. Login still requires XHR.
-        # Entry-page navigation may reach the login redirect but still goes
-        # through authorization below. Other protected cookie requests retain
-        # the same-origin check as CSRF protection.
-        if not (public or login_entry or key_id or allowed_ip) and not same_origin(request, trusted):
-            await reject(403, "不允许跨站请求")
-            return
-        # Independent credentials authorize every route, even when a browser
-        # also carries a valid or expired session cookie. XHR is a CSRF guard
-        # for cookie-only requests; API Keys and IP allowlist entries bypass it.
+        # A valid session, API Key or allowlisted IP authorizes every route.
+        # Do not compare browser Origin with an upstream Host/scheme that a
+        # reverse proxy may rewrite. Cookie-only mutations still require XHR;
+        # the header alone never authenticates a caller. Independent Key/IP
+        # credentials also work with an expired or invalid session cookie.
         state["auth_identity"] = (f"key:{key_id}" if key_id else
                                   f"ip:{state['client_ip']}" if allowed_ip else
                                   "admin" if session else None)

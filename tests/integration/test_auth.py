@@ -31,14 +31,20 @@ def change(client, data, operation, kind="api_keys", **values):
     })
 
 
+@pytest.mark.parametrize("headers", [
+    {},
+    XHR,
+    {**XHR, "Host": "10.5.0.103:5033", "Origin": "http://59.203.14.205:8133",
+     "Sec-Fetch-Site": "cross-site"},
+])
 @pytest.mark.parametrize("method,path", [
     ("POST", "/compare"), ("GET", "/admin/rules"), ("GET", "/admin/history"),
     ("POST", "/admin/import"), ("GET", "/admin/export"), ("GET", "/docs"),
     ("GET", "/redoc"), ("GET", "/openapi.json"), ("POST", "/admin/reload-config"),
     ("GET", "/admin/access-control"), ("DELETE", "/admin/history"),
 ])
-def test_anonymous_denied_before_business(anonymous_client, method, path):
-    response = anonymous_client.request(method, path)
+def test_anonymous_denied_before_business(anonymous_client, method, path, headers):
+    response = anonymous_client.request(method, path, headers=headers)
     assert response.status_code == 401
     assert response.headers["cache-control"] == "no-store"
 
@@ -187,12 +193,75 @@ def test_cross_site_entry_navigation_still_requires_login(anonymous_client, meth
     assert response.headers["location"] == "/ui/login"
 
 
-def test_admin_mutation_requires_xhr_and_same_origin(client):
+@pytest.mark.parametrize("headers", [
+    {},
+    {"Origin": "http://59.203.14.205:8133"},
+    {"Sec-Fetch-Site": "cross-site"},
+])
+def test_admin_mutation_requires_xhr(client, headers):
     client.headers.pop("X-Requested-With")
-    assert client.delete("/admin/history").status_code == 403
-    assert client.delete("/admin/history", headers={**XHR, "Origin": "http://evil.test"}).status_code == 403
-    assert client.delete("/admin/history", headers={**XHR, "Sec-Fetch-Site": "cross-site"}).status_code == 403
-    assert client.delete("/admin/history", headers={**XHR, "Origin": "http://testserver"}).status_code == 200
+    for method, path in [("POST", "/compare"), ("DELETE", "/admin/history")]:
+        response = client.request(method, path, headers=headers)
+        assert response.status_code == 403
+        assert response.json()["detail"] == "请求缺少安全请求头，请刷新页面"
+        assert client.request(method, path, headers={
+            **headers, "X-Requested-With": "fetch",
+        }).status_code == 403
+    assert client.delete("/admin/history", headers={**headers, **XHR}).status_code == 200
+
+
+def test_logged_in_page_has_full_access_behind_proxy(anonymous_client):
+    update_config(lambda data: data.setdefault("access_control", {}).update(trusted_proxies=["10.5.0.7"]))
+    browser = TestClient(app, base_url="http://59.203.14.205:8133", client=("10.5.0.7", 40000), headers={
+        **XHR, "Host": "10.5.0.103:5033", "Origin": "http://59.203.14.205:8133",
+        "X-Forwarded-For": "192.0.2.50",
+    })
+    try:
+        assert browser.get("/auth/session").json()["authorized"] is False
+        assert browser.post("/auth/login", json=LOGIN).status_code == 200
+        assert browser.get("/auth/session").json()["authenticated"] is True
+        project = {"key": "demo", "name": "测试项目"}
+        assert browser.post("/admin/projects", json=project).status_code == 201
+        assert browser.put("/admin/projects/demo", json={**project, "name": "已修改"}).status_code == 200
+        rule = {"id": "R1", "prompt_template": "{field_a} {field_b}", "project": "demo"}
+        assert browser.post("/admin/rules", json=rule).status_code == 201
+        assert browser.put("/admin/rules/R1", json={**rule, "name": "已修改"}).status_code == 200
+        assert browser.get("/admin/rules").status_code == 200
+        exported = browser.get("/admin/export")
+        assert exported.status_code == 200
+        assert browser.post("/admin/import", files={
+            "file": ("rules.yaml", exported.content, "application/x-yaml"),
+        }).status_code == 200
+        assert browser.post("/compare", json={
+            "rule_id": "missing", "field_a": {"value": "1"}, "field_b": {"value": "1"},
+        }).status_code == 404  # Business validation, without contacting an LLM.
+        data = create(browser)
+        assert change(browser, data, "rotate").status_code == 200
+        assert browser.delete("/admin/rules/R1").status_code == 200
+        assert browser.delete("/admin/projects/demo").status_code == 200
+        assert browser.delete("/admin/history").status_code == 200
+    finally:
+        browser.close()
+
+
+@pytest.mark.parametrize("cookie", ["missing", "forged", "expired"])
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/admin/rules"), ("POST", "/compare"),
+    ("PUT", "/admin/rules/R1"), ("DELETE", "/admin/history"),
+])
+def test_invalid_session_and_xhr_cannot_authorize_api(anonymous_client, monkeypatch, cookie, method, path):
+    clock = [1000.0]
+    monkeypatch.setattr(auth.admin_auth, "_clock", lambda: clock[0])
+    if cookie == "expired":
+        assert anonymous_client.post("/auth/login", json=LOGIN, headers=XHR).status_code == 200
+        clock[0] += 1801
+    elif cookie == "forged":
+        anonymous_client.cookies.set(auth.COOKIE_NAME, "forged-admin-session")
+    response = anonymous_client.request(method, path, headers={
+        **XHR, "Origin": "http://59.203.14.205:8133", "Sec-Fetch-Site": "cross-site",
+    })
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
 
 
 def test_key_hash_only_lifecycle_and_immediate_revocation(client, isolated_config):
@@ -297,7 +366,7 @@ def test_program_authorization_survives_session_expiry(program):
     {"Origin": "https://evil.example"},
     {"Sec-Fetch-Site": "cross-site"},
 ])
-def test_program_credentials_bypass_same_origin(program, headers):
+def test_program_credentials_ignore_origin_headers(program, headers):
     assert program.delete("/admin/history", headers=headers).status_code == 200
 
 
@@ -350,18 +419,24 @@ def test_trusted_proxy_chain(client, peer, xff, expected):
     program.close()
 
 
-def test_proxy_proto_and_uvicorn_rewrite(client):
+def test_proxy_headers_do_not_restrict_valid_session(client):
     update_config(lambda data: data.setdefault("access_control", {}).update(trusted_proxies=["10.0.0.1"]))
     program = TestClient(app, client=("10.0.0.1", 5000))
     headers = {**XHR, "Origin": "https://testserver", "X-Forwarded-Proto": "https"}
     assert program.post("/auth/login", headers=headers, json=LOGIN).status_code == 200
     assert program.delete("/admin/history", headers=headers).status_code == 200
     program.close()
-    program = TestClient(app, client=("192.0.2.4", 0))
-    assert program.get("/health", headers={"X-Forwarded-For": "192.0.2.4"}).status_code == 503
+    program = TestClient(app, client=("192.0.2.4", 5000))
     assert program.post("/auth/login", headers=headers, json=LOGIN).status_code == 200
-    assert program.delete("/admin/history", headers=headers).status_code == 403
+    assert program.delete("/admin/history", headers=headers).status_code == 200
     program.close()
+
+
+def test_uvicorn_rewritten_client_address_is_rejected(anonymous_client):
+    with TestClient(app, client=("192.0.2.4", 0)) as program:
+        response = program.get("/health", headers={"X-Forwarded-For": "192.0.2.4"})
+        assert response.status_code == 503
+        assert response.json()["detail"] == "代理配置冲突，请使用 --no-proxy-headers 启动服务"
 
 
 def test_config_conflict_validation_and_no_secret_echo(client, isolated_config):
